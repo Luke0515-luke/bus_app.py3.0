@@ -127,6 +127,13 @@ function bindStaticEvents() {
 
   el('btn-map-refresh').addEventListener('click', () => loadMapData(true));
   el('map-search-box').addEventListener('input', e => renderMapPanel(e.target.value));
+
+  el('btn-mobile-menu').addEventListener('click', () => {
+    document.body.classList.toggle('sidebar-open');
+  });
+  el('sidebar-backdrop').addEventListener('click', () => {
+    document.body.classList.remove('sidebar-open');
+  });
 }
 
 // ── 字體 / 頁面切換 ─────────────────────────────────────────
@@ -144,6 +151,7 @@ function switchPage(page) {
   el('page-query').classList.toggle('hidden', page !== 'query');
   el('page-map').classList.toggle('hidden', page !== 'map');
   el('btn-page-toggle').textContent = page === 'map' ? '🚌 回到查詢頁面' : '🗺️ 公車即時地圖';
+  document.body.classList.remove('sidebar-open');
   if (page === 'map') initMapPageIfNeeded();
 }
 
@@ -273,8 +281,11 @@ async function loadRouteStatus() {
   <div class="timeline-circle"></div>
   <div class="station-box">
     <div class="station-info">
-      <span class="station-name">${esc(s.name)}</span>
-      ${busHtml}${ubikeHtml}
+      <div class="station-info-top">
+        <span class="station-name">${esc(s.name)}</span>
+        ${busHtml}
+      </div>
+      ${ubikeHtml ? `<div class="station-info-ubike">${ubikeHtml}</div>` : ''}
     </div>
     <span class="time-badge ${s.badge_class}">${esc(s.eta_text)}</span>
   </div>
@@ -362,6 +373,7 @@ function renderRecent() {
 }
 
 async function selectRouteByName(route) {
+  document.body.classList.remove('sidebar-open');
   state.selectedFilter = null;
   document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
   await loadFilterRoutes(null);
