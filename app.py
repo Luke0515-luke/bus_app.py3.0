@@ -3,11 +3,15 @@ import json
 import math
 import time
 import uuid
-from datetime import datetime
+import hashlib
+import urllib.parse
+from datetime import datetime, timedelta
+from functools import wraps
 
 import requests
 from flask import Flask, render_template, request, jsonify, session
 from dotenv import load_dotenv
+from werkzeug.security import generate_password_hash, check_password_hash
 
 try:
     from groq import Groq
@@ -18,6 +22,14 @@ load_dotenv()
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", os.urandom(24))
+
+# ── 付費 / 帳號相關設定 ───────────────────────────────────────
+ECPAY_MERCHANT_ID = os.environ.get("ECPAY_MERCHANT_ID", "2000132")   # 測試用預設
+ECPAY_HASH_KEY    = os.environ.get("ECPAY_HASH_KEY",    "5294y06JbISpM5x9")
+ECPAY_HASH_IV     = os.environ.get("ECPAY_HASH_IV",     "v77hoKGq4kWxNNIS")
+ECPAY_IS_TEST     = os.environ.get("ECPAY_IS_TEST", "1") == "1"
+USERS_FILE        = os.path.join(os.path.dirname(__file__), "users.json")
+MAP_STATIC_FILE   = os.path.join(os.path.dirname(__file__), "map_static_cache.json")
 
 # ── 環境變數 / 認證資訊 ───────────────────────────────────
 app_id = os.environ.get("CLIENT_ID")
@@ -980,6 +992,226 @@ def api_chat():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+
+# ══════════════════════════════════════════════════════════
+# 使用者系統（檔案式）
+# ══════════════════════════════════════════════════════════
+def load_users():
+    try:
+        with open(USERS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+def save_users(users):
+    with open(USERS_FILE, "w", encoding="utf-8") as f:
+        json.dump(users, f, ensure_ascii=False, indent=2)
+
+def current_user():
+    uid = session.get("user_id")
+    if not uid: return None
+    return load_users().get(uid)
+
+def is_premium(user=None):
+    u = user or current_user()
+    if not u: return False
+    exp = u.get("premium_until")
+    if not exp: return False
+    try:
+        return datetime.fromisoformat(exp) > datetime.utcnow()
+    except Exception:
+        return False
+
+@app.route('/api/auth/register', methods=['POST'])
+def api_register():
+    data = request.json or {}
+    email = data.get('email', '').strip().lower()
+    pw    = data.get('password', '')
+    if not email or not pw:
+        return jsonify({"error": "請填寫電子郵件和密碼"}), 400
+    if len(pw) < 6:
+        return jsonify({"error": "密碼至少需要 6 個字元"}), 400
+    users = load_users()
+    for u in users.values():
+        if u.get('email') == email:
+            return jsonify({"error": "此電子郵件已被註冊"}), 400
+    uid = str(uuid.uuid4())
+    users[uid] = {
+        "uid": uid, "email": email,
+        "pw_hash": generate_password_hash(pw),
+        "created_at": datetime.utcnow().isoformat(),
+        "premium_until": None, "plan": None
+    }
+    save_users(users)
+    session['user_id'] = uid
+    return jsonify({"ok": True, "email": email})
+
+@app.route('/api/auth/login', methods=['POST'])
+def api_login():
+    data  = request.json or {}
+    email = data.get('email', '').strip().lower()
+    pw    = data.get('password', '')
+    users = load_users()
+    for uid, u in users.items():
+        if u.get('email') == email:
+            if not check_password_hash(u['pw_hash'], pw):
+                return jsonify({"error": "密碼錯誤"}), 401
+            session['user_id'] = uid
+            exp = u.get('premium_until')
+            return jsonify({
+                "ok": True, "email": email,
+                "is_premium": is_premium(u),
+                "premium_until": exp, "plan": u.get('plan')
+            })
+    return jsonify({"error": "找不到此帳號"}), 404
+
+@app.route('/api/auth/logout', methods=['POST'])
+def api_logout():
+    session.pop('user_id', None)
+    return jsonify({"ok": True})
+
+@app.route('/api/auth/me')
+def api_me():
+    u = current_user()
+    if not u:
+        return jsonify({"logged_in": False})
+    return jsonify({
+        "logged_in": True, "email": u['email'],
+        "is_premium": is_premium(u),
+        "premium_until": u.get('premium_until'),
+        "plan": u.get('plan')
+    })
+
+# ══════════════════════════════════════════════════════════
+# ECPay 付費
+# ══════════════════════════════════════════════════════════
+PLANS = {
+    "monthly": {"amount": 20,  "desc": "月費方案 20元/月",  "days": 30},
+    "yearly":  {"amount": 200, "desc": "年費方案 200元/年", "days": 365},
+}
+
+def ecpay_mac(params):
+    """計算 ECPay CheckMacValue（SHA256）"""
+    sorted_params = sorted((k, v) for k, v in params.items() if k != 'CheckMacValue')
+    raw = '&'.join(f'{k}={v}' for k, v in sorted_params)
+    raw = f"HashKey={ECPAY_HASH_KEY}&{raw}&HashIV={ECPAY_HASH_IV}"
+    raw = urllib.parse.quote_plus(raw).lower()
+    return hashlib.sha256(raw.encode()).hexdigest().upper()
+
+@app.route('/api/payment/create', methods=['POST'])
+def api_payment_create():
+    u = current_user()
+    if not u:
+        return jsonify({"error": "請先登入"}), 401
+    data = request.json or {}
+    plan = data.get('plan')
+    if plan not in PLANS:
+        return jsonify({"error": "無效方案"}), 400
+    p = PLANS[plan]
+    trade_no = f"BUS{datetime.now().strftime('%Y%m%d%H%M%S')}{uuid.uuid4().hex[:4].upper()}"
+    base_url = request.host_url.rstrip('/')
+    ecpay_url = ("https://payment-stage.ecpay.com.tw/Cashier/AioCheckOut/V5"
+                 if ECPAY_IS_TEST else
+                 "https://payment.ecpay.com.tw/Cashier/AioCheckOut/V5")
+    params = {
+        "MerchantID":        ECPAY_MERCHANT_ID,
+        "MerchantTradeNo":   trade_no,
+        "MerchantTradeDate": datetime.now().strftime("%Y/%m/%d %H:%M:%S"),
+        "PaymentType":       "aio",
+        "TotalAmount":       str(p["amount"]),
+        "TradeDesc":         p["desc"],
+        "ItemName":          p["desc"],
+        "ReturnURL":         f"{base_url}/api/payment/return",
+        "ClientBackURL":     f"{base_url}/",
+        "ChoosePayment":     "Credit",
+        "EncryptType":       "1",
+        "CustomField1":      u['uid'],
+        "CustomField2":      plan,
+    }
+    params["CheckMacValue"] = ecpay_mac(params)
+    # 產生自動送出表單
+    fields = ''.join(f'<input type="hidden" name="{k}" value="{v}">' for k, v in params.items())
+    form_html = (f'<form id="ecpay_form" method="POST" action="{ecpay_url}">{fields}</form>'
+                 f'<script>document.getElementById("ecpay_form").submit();</script>')
+    return jsonify({"form_html": form_html})
+
+@app.route('/api/payment/return', methods=['POST'])
+def api_payment_return():
+    """ECPay 付款完成伺服器回呼"""
+    data  = request.form.to_dict()
+    rtn   = data.get('RtnCode', '')
+    given = data.get('CheckMacValue', '').upper()
+    calc  = ecpay_mac(data)
+    if rtn != '1' or given != calc:
+        return "0|Error", 200
+    uid  = data.get('CustomField1', '')
+    plan = data.get('CustomField2', '')
+    if uid and plan in PLANS:
+        users = load_users()
+        if uid in users:
+            days = PLANS[plan]['days']
+            u    = users[uid]
+            cur_exp = u.get('premium_until')
+            try:
+                base = datetime.fromisoformat(cur_exp) if cur_exp and datetime.fromisoformat(cur_exp) > datetime.utcnow() else datetime.utcnow()
+            except Exception:
+                base = datetime.utcnow()
+            u['premium_until'] = (base + timedelta(days=days)).isoformat()
+            u['plan'] = plan
+            save_users(users)
+    return "1|OK", 200
+
+# ══════════════════════════════════════════════════════════
+# 地圖靜態快取（站點座標 + 路線軌跡，存在伺服器）
+# ══════════════════════════════════════════════════════════
+def load_map_static():
+    try:
+        with open(MAP_STATIC_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {"stops": [], "shapes": [], "routes": [], "built_at": None}
+
+@app.route('/api/map_static')
+def api_map_static():
+    """回傳伺服器快取的站點+路線軌跡（每位訪客共用，不重複抓）"""
+    return jsonify(load_map_static())
+
+@app.route('/api/map_static/build', methods=['POST'])
+def api_build_map_static():
+    """管理員手動觸發：一次建立所有路線站點座標+路線軌跡"""
+    all_routes = list(set(r for rl in ROUTE_CATEGORIES.values() for r in rl))
+
+    # 1. 所有公車站點座標
+    all_stops_raw = fetch_all_bus_stops()
+    stops_out = []
+    seen_names = set()
+    for s in all_stops_raw:
+        pos  = s.get("StopPosition", {})
+        lat  = pos.get("PositionLat")
+        lon  = pos.get("PositionLon")
+        name = s.get("StopName", {}).get("Zh_tw", "")
+        if lat and lon and name and name not in seen_names:
+            seen_names.add(name)
+            stops_out.append({"name": name, "lat": lat, "lon": lon})
+
+    # 2. 路線軌跡
+    shapes_out = []
+    for rn in all_routes:
+        color = get_route_color(rn)
+        for sh in fetch_route_shape(rn):
+            pts = parse_wkt_linestring(sh.get("Geometry", ""))
+            if pts:
+                shapes_out.append({"route": rn, "color": color, "points": pts})
+
+    data = {
+        "stops":    stops_out,
+        "shapes":   shapes_out,
+        "routes":   all_routes,
+        "built_at": datetime.now().isoformat()
+    }
+    with open(MAP_STATIC_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False)
+    return jsonify({"ok": True, "stops": len(stops_out), "shapes": len(shapes_out), "routes": len(all_routes)})
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)
