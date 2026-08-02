@@ -983,4 +983,5 @@ def api_chat():
 
 
 if __name__ == '__main__':
+    pull_backup()
     app.run(debug=True, port=5000)
