@@ -90,6 +90,64 @@ INTERCITY_OPERATORS = {
     "中壢客運": "719",
 }
 
+
+
+async def backup(self, ctx=None):
+        try:
+            # 備份來源與儲存位置
+            source_folder = '/opt/render/project/data'
+            backup_folder = '/opt/render/project/backups'
+
+            os.makedirs(backup_folder, exist_ok=True)
+
+            # 備份檔案路徑
+            now = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            backup_filename = f"backup_{now}.zip"
+            backup_path = os.path.join(backup_folder, backup_filename)
+
+            # 壓縮成 zip
+            #shutil.make_archive(backup_path.replace(".zip", ""), 'zip', source_folder)
+            await asyncio.to_thread(
+            shutil.make_archive, 
+            backup_path.replace(".zip", ""),       # 對應原本的 backup_path.replace(".zip", "")
+            'zip',           # 壓縮格式
+            source_folder    # 來源資料夾
+            )
+
+            print(f"✅ 自動備份完成：{backup_path}")
+
+            # 保留最新10個備份
+            backups = sorted(
+                [f for f in os.listdir(backup_folder) if f.endswith('.zip')],
+                key=lambda f: os.path.getmtime(os.path.join(backup_folder, f)),
+                reverse=True  # 最新的在前
+            )
+            for old_backup in backups[10:]:
+                old_path = os.path.join(backup_folder, old_backup)
+                os.remove(old_path)
+                print(f"🗑️ 已刪除過舊備份：{old_backup}")
+
+            git_push_backup(source_folder)
+        except Exception as e:
+            print(f"❌ 備份失敗: {e}")
+
+async def backup_loop():
+    """每 3 小時執行備份的非同步迴圈"""
+    while True:
+        await backup()
+        await asyncio.sleep(3 * 60 * 60)
+
+def run_scheduler():
+    """在獨立執行緒中跑 asyncio 事件迴圈"""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(backup_loop())
+
+# 啟動排程執行緒
+scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
+scheduler_thread.start()
+
+
 # ── in-memory 快取（等同於 st.cache_data）────────────────
 _cache_store = {}
 
