@@ -22,6 +22,8 @@ import shutil
 load_dotenv()
 
 def create_app():
+    scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
+    scheduler_thread.start()
     pull_backup()
     app = Flask(__name__)
     app.secret_key = os.environ.get("FLASK_SECRET_KEY", os.urandom(24))
