@@ -21,6 +21,7 @@ def create_app():
     pull_backup()
     app = Flask(__name__)
     app.secret_key = os.environ.get("FLASK_SECRET_KEY", os.urandom(24))
+    return app
 app = create_app()
 
 # ── 環境變數 / 認證資訊 ───────────────────────────────────
