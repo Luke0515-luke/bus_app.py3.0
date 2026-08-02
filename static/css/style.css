@@ -173,6 +173,15 @@ body.font-large .ev-tag, body.font-large .ubike-tag { font-size: 14px !important
 .leaflet-popup-content { min-width: 160px; }
 .leaflet-tooltip { font-size: 11px; padding: 3px 6px; }
 
+/* 站名常駐標籤：預設縮小檢視時隱藏（否則上千個站名會疊在一起看不清楚），
+   放大到街道等級（zoom >= 15）才顯示；不論放大與否都能點擊圓點看彈出視窗。 */
+.leaflet-tooltip.stop-label {
+  background: rgba(10, 10, 25, 0.78); color: #fff; border: none; box-shadow: none;
+  font-size: 10px; padding: 1px 6px; white-space: nowrap; pointer-events: none;
+}
+.leaflet-tooltip.stop-label::before { display: none; }
+.leaflet-container:not(.stops-zoomed-in) .stop-label { display: none; }
+
 /* ══════════════════════════════════════════════════════════
    📱 手機版排版（Responsive / Mobile）
    以上為電腦版樣式，以下為手機版覆寫，不影響電腦版顯示
