@@ -3,6 +3,7 @@ import os
 
 # 設定單次推送的總大小上限 (建議設為 15MB，以確保在 Render/Cloudflare 環境下絕對安全)
 BATCH_SIZE_LIMIT = 15 * 1024 * 1024
+github_token = os.environ.get("GITHUB_TOKEN")
 
 def run_cmd(args, check=True):
     """執行指令的輔助函式，方便除錯"""
@@ -17,16 +18,16 @@ def git_push_backup(backup_path):
     print(f"準備開始推送")
     try:
         os.chdir(backup_path)
-        repo_url = "https://ghp_xxx@github.com/xxxxxx/testbot-backups.git"
+        repo_url =f'https://{github_token}@github.com/Luke0515-luke/bus_app.py3.0backup.git'
         
-        subprocess.run(["git", "config", "user.name", "xxxxxx"], check=True)
-        subprocess.run(["git", "config", "user.email", "xxxxxx@gmail.com"], check=True)
+        subprocess.run(["git", "config", "user.name", "luke"], check=True)
+        subprocess.run(["git", "config", "user.email", "0515luke@gmail.com"], check=True)
 
         # 1. 初始化檢查 (只在第一次執行 init，保留 .git 資料夾以達成增量備份)
         if not os.path.exists(os.path.join(backup_path, ".git")):
             subprocess.run(["git", "init"], check=True)
-            subprocess.run(["git", "config", "user.name", "xxxxxx"], check=True)
-            subprocess.run(["git", "config", "user.email", "xxxxxx@gmail.com"], check=True)
+            subprocess.run(["git", "config", "user.name", "luke"], check=True)
+            subprocess.run(["git", "config", "user.email", "0515luke@gmail.com"], check=True)
             subprocess.run(["git", "branch", "-M", "master"], check=True)
             subprocess.run(["git", "remote", "add", "origin", repo_url], check=True)
             # 嘗試拉取遠端以避免衝突 (若遠端是空的會失敗，所以 check=False)
