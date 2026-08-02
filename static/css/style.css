@@ -171,6 +171,7 @@ body.font-large .ev-tag, body.font-large .ubike-tag { font-size: 14px !important
 .bus-popup b { font-size: 15px; color: #333; }
 .bus-popup .tag { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 11px; color: white; margin-top: 4px; margin-right: 2px; }
 .leaflet-popup-content { min-width: 160px; }
+.leaflet-tooltip { font-size: 11px; padding: 3px 6px; }
 
 /* ══════════════════════════════════════════════════════════
    📱 手機版排版（Responsive / Mobile）
