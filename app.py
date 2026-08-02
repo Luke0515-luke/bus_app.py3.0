@@ -101,7 +101,7 @@ async def backup():
             os.makedirs(backup_folder, exist_ok=True)
 
             # 備份檔案路徑
-            now = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            now = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
             backup_filename = f"backup_{now}.zip"
             backup_path = os.path.join(backup_folder, backup_filename)
 
