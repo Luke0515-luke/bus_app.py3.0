@@ -92,7 +92,7 @@ INTERCITY_OPERATORS = {
 
 
 
-async def backup(self, ctx=None):
+async def backup():
         try:
             # 備份來源與儲存位置
             source_folder = '/opt/render/project/data'
