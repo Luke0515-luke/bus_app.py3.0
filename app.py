@@ -3,6 +3,7 @@ import json
 import math
 import time
 import uuid
+import concurrent.futures
 from datetime import datetime
 
 import requests
@@ -13,6 +14,7 @@ try:
     from groq import Groq
 except ImportError:
     Groq = None
+
 from pull_backup import pull_backup
 from push_backup import git_push_backup
 import asyncio
@@ -49,6 +51,7 @@ AUTH_URL = "https://tdx.transportdata.tw/auth/realms/TDXConnect/protocol/openid-
 TAINAN_LAT, TAINAN_LON = 22.9997, 120.2270
 UBIKE_SPEED_KMH = 15  # 估算騎車速度（OSRM 失敗時備用）
 CACHE_FILE = os.path.join(os.path.dirname(__file__), "tainan_stops_cache.json")
+COORDS_CACHE_FILE = os.path.join(os.path.dirname(__file__), "tainan_stops_coords_cache.json")
 
 # ── 常數與對照表（與原始 Streamlit 版本完全一致） ─────────
 ROUTE_CATEGORIES = {
@@ -91,7 +94,6 @@ INTERCITY_OPERATORS = {
     "豐原客運": "717",
     "中壢客運": "719",
 }
-
 
 
 async def backup():
@@ -149,6 +151,15 @@ def run_scheduler():
 scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
 scheduler_thread.start()
 
+# 所有設定過的路線（去重、保留順序），用來確保地圖「未篩選」時每條路線都會被繪製，
+# 不會因為該路線目前沒有營運中的公車而被漏掉。
+ALL_ROUTE_NAMES = []
+_seen_route_names = set()
+for _rl in ROUTE_CATEGORIES.values():
+    for _r in _rl:
+        if _r not in _seen_route_names:
+            _seen_route_names.add(_r)
+            ALL_ROUTE_NAMES.append(_r)
 
 # ── in-memory 快取（等同於 st.cache_data）────────────────
 _cache_store = {}
@@ -276,6 +287,20 @@ def tdx_headers():
     return {'authorization': f'Bearer {get_tdx_token()}', 'Accept-Encoding': 'gzip'}
 
 
+def tdx_get(url, timeout=8, retries=1):
+    """帶重試的 TDX GET，減少大量平行請求時偶發逾時/限流造成的空白資料。"""
+    for attempt in range(retries + 1):
+        try:
+            res = requests.get(url, headers=tdx_headers(), timeout=timeout)
+            if res.status_code == 200:
+                return res
+        except Exception:
+            pass
+        if attempt < retries:
+            time.sleep(0.4)
+    return None
+
+
 # ── TDX / 第三方資料存取（皆對應原本 st.cache_data 函數）───
 @cached(3600)
 def fetch_route_stops(route_name):
@@ -362,13 +387,71 @@ def fetch_all_bus_stops():
 @cached(3600)
 def fetch_route_shape(route_name):
     url = f"https://tdx.transportdata.tw/api/basic/v2/Bus/Shape/City/Tainan/{route_name}?%24format=JSON"
-    try:
-        res = requests.get(url, headers=tdx_headers(), timeout=8)
-        if res.status_code == 200:
+    res = tdx_get(url, timeout=8, retries=1)
+    if res is not None:
+        try:
             return res.json()
-    except Exception:
-        pass
+        except Exception:
+            pass
     return []
+
+
+def _parse_stop_positions_from_stop_of_route(data):
+    """把 StopOfRoute 回傳（合併去/回程、依站名去重）整理成 [{name, lat, lon}, ...]"""
+    result = []
+    seen = set()
+    for dir_data in data:
+        for s in dir_data.get("Stops", []):
+            name = s.get("StopName", {}).get("Zh_tw", "")
+            pos = s.get("StopPosition", {})
+            lat, lon = pos.get("PositionLat"), pos.get("PositionLon")
+            if name and lat and lon and name not in seen:
+                seen.add(name)
+                result.append({"name": name, "lat": lat, "lon": lon})
+    return result
+
+
+@cached(3600)
+def fetch_route_stop_positions(route_name):
+    """回傳某路線所有站牌的座標，供地圖畫小圓點用。
+    優先讀取本機座標快取（由「系統維護→更新站點快取」建立），
+    這樣地圖頁不必每次都即時打 TDX、也不會因為單次請求逾時/限流而漏站。
+    快取不存在或沒有該路線時才即時向 TDX 查詢（並附重試）。"""
+    try:
+        with open(COORDS_CACHE_FILE, "r", encoding="utf-8") as f:
+            c = json.load(f)
+            if route_name in c and c[route_name]:
+                return c[route_name]
+    except FileNotFoundError:
+        pass
+
+    url = f"https://tdx.transportdata.tw/api/basic/v2/Bus/StopOfRoute/City/Tainan/{route_name}?%24format=JSON"
+    res = tdx_get(url, timeout=8, retries=1)
+    if res is not None:
+        try:
+            return _parse_stop_positions_from_stop_of_route(res.json())
+        except Exception:
+            pass
+    return []
+
+
+def fetch_shapes_and_stops_parallel(routes):
+    """平行抓取多條路線的軌跡與站牌座標，避免地圖「顯示全部路線」時要序列等待上百次 API。"""
+    shape_map, stop_map = {}, {}
+
+    def worker(r):
+        return r, fetch_route_shape(r), fetch_route_stop_positions(r)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        futures = [executor.submit(worker, r) for r in routes]
+        for fut in concurrent.futures.as_completed(futures):
+            try:
+                r, shapes, stops = fut.result()
+                shape_map[r] = shapes
+                stop_map[r] = stops
+            except Exception:
+                pass
+    return shape_map, stop_map
 
 
 def fetch_bus_realtime_positions(route_name=None):
@@ -899,14 +982,14 @@ def api_map_data():
         all_buses = fetch_bus_realtime_positions()
 
     bus_features = []
-    route_set = set()
+    live_route_set = set()
     for bus in all_buses:
         pos = bus.get("BusPosition", {})
         lat, lon = pos.get("PositionLat"), pos.get("PositionLon")
         route = bus.get("RouteName", {}).get("Zh_tw", "")
         if not lat or not lon or not route:
             continue
-        route_set.add(route)
+        live_route_set.add(route)
         bus_features.append({
             "lat": lat, "lon": lon, "route": route,
             "plate": bus.get("PlateNumb", ""),
@@ -915,19 +998,33 @@ def api_map_data():
             "color": get_route_color(route)
         })
 
+    # 無論該路線目前有沒有營運中的公車，都要能顯示其路線軌跡與站牌，
+    # 因此路線清單一律使用「使用者指定的篩選清單」或「系統設定的全部路線」，
+    # 而不是只看目前有跑的公車有哪些路線。
+    routes_to_draw = filter_list if filter_list else ALL_ROUTE_NAMES
+
+    shape_map, stop_map = fetch_shapes_and_stops_parallel(routes_to_draw)
+
     shape_features = []
-    routes_to_draw = filter_list if filter_list else sorted(route_set)[:30]
+    stop_features = []
     for r in routes_to_draw:
         color = get_route_color(r)
-        for sh in fetch_route_shape(r):
+        for sh in shape_map.get(r, []):
             pts = parse_wkt_linestring(sh.get("Geometry", ""))
             if pts:
                 shape_features.append({"route": r, "color": color, "points": pts})
+        for sp in stop_map.get(r, []):
+            stop_features.append({
+                "route": r, "name": sp["name"],
+                "lat": sp["lat"], "lon": sp["lon"], "color": color
+            })
 
     return jsonify({
         "buses": bus_features,
         "shapes": shape_features,
-        "routes": sorted(route_set),
+        "stops": stop_features,
+        "routes": routes_to_draw,
+        "live_routes": sorted(live_route_set),
         "now": datetime.now().strftime("%H:%M:%S"),
     })
 
@@ -1051,5 +1148,4 @@ def api_chat():
 
 
 if __name__ == '__main__':
-    pull_backup()
     app.run(debug=True, port=5000)
