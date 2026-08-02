@@ -17,8 +17,11 @@ from pull_backup import pull_backup
 
 load_dotenv()
 
-app = Flask(__name__)
-app.secret_key = os.environ.get("FLASK_SECRET_KEY", os.urandom(24))
+def create_app():
+    pull_backup()
+    app = Flask(__name__)
+    app.secret_key = os.environ.get("FLASK_SECRET_KEY", os.urandom(24))
+app = create_app()
 
 # ── 環境變數 / 認證資訊 ───────────────────────────────────
 app_id = os.environ.get("CLIENT_ID")
