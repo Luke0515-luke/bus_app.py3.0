@@ -274,3 +274,85 @@ body.font-large .ev-tag, body.font-large .ubike-tag { font-size: 14px !important
   }
   body.font-large .station-name { font-size: 18px !important; }
 }
+/* ══════════════════════════════════════════
+   新增：帳號 / 付費 / 地圖站名 樣式
+══════════════════════════════════════════ */
+
+/* ── 帳號區 ── */
+.user-area { padding: 8px 12px; background: #f8f9fa; border-radius: 8px; margin: 8px 12px; }
+.user-info { font-size: 12px; color: #444; margin-bottom: 5px; display: flex; align-items: center; gap: 6px; }
+.user-actions { display: flex; gap: 6px; }
+.btn-outline { background: transparent; border: 1.5px solid #2563eb; color: #2563eb; }
+.btn-outline:hover { background: #eff6ff; }
+.btn-gray { background: #e5e7eb; color: #374151; }
+.btn-gray:hover { background: #d1d5db; }
+.btn-sm { padding: 4px 10px; font-size: 12px; border-radius: 6px; }
+.premium-badge { background: #f59e0b; color: #fff; border-radius: 10px; padding: 1px 7px; font-size: 11px; font-weight: 700; }
+.sidebar-route-btn { text-align: left; font-size: 12px; padding: 5px 10px; background: #f3f4f6; color: #374151; margin-bottom: 3px; border-radius: 6px; }
+.sidebar-route-btn:hover { background: #dbeafe; color: #1d4ed8; }
+
+/* ── Modal ── */
+.modal-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,.55);
+  z-index: 9000; display: flex; align-items: center; justify-content: center;
+}
+.modal-overlay.hidden { display: none; }
+.modal-box {
+  background: #fff; border-radius: 14px; padding: 28px 24px;
+  width: 90%; max-width: 400px; position: relative; box-shadow: 0 20px 60px rgba(0,0,0,.25);
+}
+.modal-close {
+  position: absolute; top: 12px; right: 14px;
+  background: none; border: none; font-size: 18px; color: #888; cursor: pointer;
+}
+.modal-close:hover { color: #333; }
+
+/* ── 登入 Tab ── */
+.auth-tabs { display: flex; gap: 0; margin-bottom: 18px; border-bottom: 2px solid #e5e7eb; }
+.auth-tab { flex: 1; padding: 9px; background: none; border: none; font-size: 14px; font-weight: 600; color: #9ca3af; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -2px; }
+.auth-tab.active { color: #2563eb; border-color: #2563eb; }
+
+/* ── 付費方案 ── */
+.plan-cards { display: flex; gap: 12px; margin: 12px 0; }
+.plan-card {
+  flex: 1; border: 2px solid #e5e7eb; border-radius: 12px; padding: 16px 12px;
+  text-align: center; cursor: pointer; transition: all .2s; position: relative;
+}
+.plan-card:hover { border-color: #2563eb; background: #eff6ff; }
+.plan-card.recommended { border-color: #f59e0b; background: #fffbeb; }
+.plan-card.recommended:hover { background: #fef3c7; }
+.plan-badge { position: absolute; top: -10px; left: 50%; transform: translateX(-50%); background: #f59e0b; color: #fff; border-radius: 10px; padding: 1px 10px; font-size: 11px; font-weight: 700; }
+.plan-name { font-size: 14px; font-weight: 700; margin-bottom: 4px; }
+.plan-price { font-size: 22px; font-weight: 800; color: #2563eb; }
+.plan-price span { font-size: 13px; color: #6b7280; font-weight: 400; }
+.plan-desc { font-size: 11px; color: #6b7280; margin-top: 4px; }
+
+/* ── 地圖圖層切換 ── */
+.map-toggle-row { display: flex; gap: 14px; padding: 6px 10px; font-size: 12px; color: #9fa8da; }
+.map-toggle-row label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
+
+/* ── 手機版側邊欄 Drawer ── */
+@media (max-width: 900px) {
+  .mobile-menu-btn {
+    display: flex !important;
+    position: fixed; top: 12px; left: 12px; z-index: 1100;
+    background: #2563eb; color: #fff; border: none;
+    width: 42px; height: 42px; border-radius: 10px;
+    font-size: 20px; align-items: center; justify-content: center;
+    box-shadow: 0 2px 10px rgba(0,0,0,.2);
+  }
+  #sidebar {
+    position: fixed; left: 0; top: 0; bottom: 0; z-index: 1000;
+    transform: translateX(-100%); transition: transform .25s ease;
+    box-shadow: none;
+  }
+  #sidebar.open {
+    transform: translateX(0);
+    box-shadow: 4px 0 30px rgba(0,0,0,.2);
+  }
+  #sidebar-backdrop {
+    display: none; position: fixed; inset: 0; z-index: 999; background: rgba(0,0,0,.4);
+  }
+  #sidebar-backdrop.visible { display: block; }
+  #main-content { margin-left: 0 !important; padding-top: 60px; }
+}
