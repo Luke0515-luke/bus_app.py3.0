@@ -23,7 +23,7 @@ load_dotenv()
 
 def create_app():
     import traceback
-    traceback.print_sta
+    traceback.print_stack()   # 印出是哪一行呼叫了 create_app
     pull_backup()
     app = Flask(__name__)
     app.secret_key = os.environ.get("FLASK_SECRET_KEY", os.urandom(24))
