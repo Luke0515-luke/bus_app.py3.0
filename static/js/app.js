@@ -38,9 +38,11 @@ const state = {
   mapAllRoutes: [],
   mapBusData: [],
   mapShapeData: [],
+  mapStopData: [],
   leafletMap: null,
   busLayer: null,
   shapeLayer: null,
+  stopLayer: null,
   ttsText: '',
 };
 
@@ -569,12 +571,13 @@ async function sendChat() {
 function initMapPageIfNeeded() {
   if (state.mapInited) { loadMapData(false); return; }
   state.mapInited = true;
-  state.leafletMap = L.map('leaflet-map', { zoomControl: true }).setView([22.9997, 120.2270], 13);
+  state.leafletMap = L.map('leaflet-map', { zoomControl: true, preferCanvas: true }).setView([22.9997, 120.2270], 13);
   L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
     attribution: '© OpenStreetMap © CARTO', subdomains: 'abcd', maxZoom: 19
   }).addTo(state.leafletMap);
-  state.busLayer = L.layerGroup().addTo(state.leafletMap);
   state.shapeLayer = L.layerGroup().addTo(state.leafletMap);
+  state.stopLayer = L.layerGroup().addTo(state.leafletMap);
+  state.busLayer = L.layerGroup().addTo(state.leafletMap);
   loadMapData(false);
 }
 
@@ -587,10 +590,12 @@ async function loadMapData(forceRefresh) {
     const data = await api(`/api/map_data${params}`);
     state.mapBusData = data.buses;
     state.mapShapeData = data.shapes;
+    state.mapStopData = data.stops || [];
     state.mapAllRoutes = data.routes;
     state.mapActiveRoutes = new Set(data.routes); // 預設全部顯示
     el('map-caption').textContent = `資料時間：${data.now}　｜　每次按「🔄 更新」重抓最新位置`;
     drawMapShapes();
+    drawMapStops();
     drawMapBuses();
     renderMapPanel(el('map-search-box').value);
   } catch (e) {
@@ -612,6 +617,17 @@ function drawMapShapes() {
     const latlngs = sh.points.map(p => [p[0], p[1]]);
     L.polyline(latlngs, { color: sh.color, weight: 3, opacity: 0.75 })
       .bindTooltip(sh.route, { sticky: true }).addTo(state.shapeLayer);
+  });
+}
+function drawMapStops() {
+  state.stopLayer.clearLayers();
+  state.mapStopData.forEach(sp => {
+    if (!state.mapActiveRoutes.has(sp.route)) return;
+    L.circleMarker([sp.lat, sp.lon], {
+      radius: 3.5, weight: 1, color: '#ffffff', opacity: 0.9,
+      fillColor: sp.color, fillOpacity: 0.95
+    }).bindTooltip(`${sp.route}｜${sp.name}`, { direction: 'top', sticky: true })
+      .addTo(state.stopLayer);
   });
 }
 function countByRoute() {
@@ -649,7 +665,7 @@ function renderMapPanel(filterText) {
   allItem.onclick = () => {
     if (state.mapActiveRoutes.size === state.mapAllRoutes.length) state.mapActiveRoutes.clear();
     else state.mapAllRoutes.forEach(r => state.mapActiveRoutes.add(r));
-    renderMapPanel(filterText); drawMapShapes(); drawMapBuses();
+    renderMapPanel(filterText); drawMapShapes(); drawMapStops(); drawMapBuses();
   };
   list.appendChild(allItem);
 
@@ -663,7 +679,7 @@ function renderMapPanel(filterText) {
     item.onclick = () => {
       if (state.mapActiveRoutes.has(route)) state.mapActiveRoutes.delete(route);
       else state.mapActiveRoutes.add(route);
-      drawMapShapes(); drawMapBuses(); renderMapPanel(filterText);
+      drawMapShapes(); drawMapStops(); drawMapBuses(); renderMapPanel(filterText);
     };
     list.appendChild(item);
   });
