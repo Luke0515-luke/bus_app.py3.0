@@ -10,14 +10,85 @@
 </head>
 <body id="body-root">
 
+<!-- ── 手機漢堡按鈕 ── -->
 <button id="btn-mobile-menu" class="mobile-menu-btn" aria-label="開啟選單">☰</button>
 <div id="sidebar-backdrop"></div>
 
+<!-- ── 登入 Modal ── -->
+<div id="auth-modal" class="modal-overlay hidden">
+  <div class="modal-box">
+    <button class="modal-close" onclick="closeAuthModal()">✕</button>
+    <div id="auth-tabs" class="auth-tabs">
+      <button class="auth-tab active" onclick="switchAuthTab('login')">登入</button>
+      <button class="auth-tab" onclick="switchAuthTab('register')">註冊</button>
+    </div>
+    <div id="auth-login">
+      <label>電子郵件</label>
+      <input type="email" id="login-email" placeholder="your@email.com">
+      <label>密碼</label>
+      <input type="password" id="login-pw" placeholder="密碼">
+      <button class="btn btn-block" onclick="doLogin()">登入</button>
+      <div id="login-msg" class="caption"></div>
+    </div>
+    <div id="auth-register" class="hidden">
+      <label>電子郵件</label>
+      <input type="email" id="reg-email" placeholder="your@email.com">
+      <label>密碼（至少 6 碼）</label>
+      <input type="password" id="reg-pw" placeholder="密碼">
+      <button class="btn btn-block" onclick="doRegister()">建立帳號</button>
+      <div id="reg-msg" class="caption"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ── 付費 Modal ── -->
+<div id="pay-modal" class="modal-overlay hidden">
+  <div class="modal-box">
+    <button class="modal-close" onclick="closePayModal()">✕</button>
+    <h3>🌟 升級付費會員</h3>
+    <p class="caption" style="margin-bottom:12px;">付費會員可使用：完整地圖快取、無廣告、優先功能</p>
+    <div class="plan-cards">
+      <div class="plan-card" onclick="selectPlan('monthly')">
+        <div class="plan-name">月費方案</div>
+        <div class="plan-price">NT$ 20<span>/月</span></div>
+        <div class="plan-desc">適合短期使用</div>
+      </div>
+      <div class="plan-card recommended" onclick="selectPlan('yearly')">
+        <div class="plan-badge">推薦</div>
+        <div class="plan-name">年費方案</div>
+        <div class="plan-price">NT$ 200<span>/年</span></div>
+        <div class="plan-desc">省 40 元，每月僅 16.7 元</div>
+      </div>
+    </div>
+    <div id="pay-msg" class="caption" style="margin-top:8px;"></div>
+    <div id="pay-form-container"></div>
+  </div>
+</div>
+
 <div id="app">
 
-  <!-- ══════════════ 左側常駐側邊欄 ══════════════ -->
+  <!-- ══════════════ 左側側邊欄 ══════════════ -->
   <aside id="sidebar">
     <h1 class="sidebar-title">🚌 台南公車助理</h1>
+
+    <!-- 帳號區 -->
+    <div id="user-area" class="user-area">
+      <div id="user-logged-out" class="hidden">
+        <button class="btn btn-block btn-outline" onclick="openAuthModal()">🔑 登入 / 註冊</button>
+      </div>
+      <div id="user-logged-in" class="hidden">
+        <div class="user-info">
+          <span id="user-email-display"></span>
+          <span id="user-badge" class="hidden premium-badge">⭐ 會員</span>
+        </div>
+        <div class="user-actions">
+          <button class="btn btn-sm" onclick="openPayModal()">💳 升級/續約</button>
+          <button class="btn btn-sm btn-gray" onclick="doLogout()">登出</button>
+        </div>
+      </div>
+    </div>
+
+    <hr>
 
     <button id="btn-font-toggle" class="btn btn-block">🔠 放大字體（視障輔助）</button>
     <button id="btn-page-toggle" class="btn btn-block">🗺️ 公車即時地圖</button>
@@ -81,6 +152,7 @@
     <details class="expander">
       <summary>⚙️ 系統維護</summary>
       <button id="btn-update-cache" class="btn btn-block">🔄 更新全台南站點快取</button>
+      <button id="btn-build-map-cache" class="btn btn-block" style="margin-top:6px;">🗺️ 建立地圖靜態快取</button>
       <div id="cache-status"></div>
     </details>
   </aside>
@@ -91,46 +163,36 @@
     <!-- ─────────── 查詢頁面 ─────────── -->
     <section id="page-query" class="page">
       <h2>🚌 台南公車即時時刻查詢</h2>
-
       <div class="query-columns">
-        <!-- 左欄：路線篩選 -->
         <div class="query-left">
           <h3>🔍 路線篩選</h3>
           <p class="caption">點選顏色或數字篩選：</p>
-
           <div class="filter-grid">
             <button class="filter-btn" data-f="綠">綠</button>
             <button class="filter-btn" data-f="橘">橘</button>
             <button class="filter-btn" data-f="1">1</button>
             <button class="filter-btn" data-f="2">2</button>
-
             <button class="filter-btn" data-f="棕">棕</button>
             <button class="filter-btn" data-f="藍">藍</button>
             <button class="filter-btn" data-f="3">3</button>
             <button class="filter-btn" data-f="4">4</button>
-
             <button class="filter-btn" data-f="紅">紅</button>
             <button class="filter-btn" data-f="黃">黃</button>
             <button class="filter-btn" data-f="5">5</button>
             <button class="filter-btn" data-f="6">6</button>
-
             <button class="filter-btn" data-f="市區">市區</button>
             <button class="filter-btn" data-f="高鐵">高鐵</button>
             <button class="filter-btn" data-f="7">7</button>
             <button class="filter-btn" data-f="8">8</button>
-
             <button class="filter-btn" data-f="觀光">觀光</button>
             <button class="filter-btn" data-f="9">9</button>
             <button class="filter-btn" data-f="0">0</button>
           </div>
           <button id="btn-clear-filter" class="btn btn-block">❌ 清除篩選</button>
           <div id="filter-status" class="info-box">顯示：全部路線</div>
-
           <label>選擇路線</label>
           <select id="route-select"><option value="">請選擇或輸入路線...</option></select>
-
           <button id="btn-fav-toggle" class="btn btn-block hidden">☆ 加入最愛</button>
-
           <div id="stop-select-body" class="hidden">
             <label>等候站</label>
             <select id="start-select"></select>
@@ -138,17 +200,11 @@
             <select id="end-select"></select>
           </div>
           <div id="route-hint" class="info-box">請選擇路線</div>
-
           <hr>
-
           <h3>📍 附近公車站</h3>
           <button id="btn-gps" class="btn btn-block">📡 自動取得座標</button>
-          <div class="gps-coords">
-            緯度：<input id="lat-disp" readonly placeholder="點上方取得">
-          </div>
-          <div class="gps-coords">
-            經度：<input id="lon-disp" readonly placeholder="點上方取得">
-          </div>
+          <div class="gps-coords">緯度：<input id="lat-disp" readonly placeholder="點上方取得"></div>
+          <div class="gps-coords">經度：<input id="lon-disp" readonly placeholder="點上方取得"></div>
           <label>緯度</label>
           <input type="text" id="gps-lat-in" placeholder="例：22.9997">
           <label>經度</label>
@@ -157,10 +213,8 @@
           <div id="nearby-result"></div>
         </div>
 
-        <!-- 右欄：即時動態 -->
         <div class="query-right">
           <div id="weather-box" class="info-box hidden"></div>
-
           <div id="status-box" class="hidden">
             <h3 id="status-title"></h3>
             <div class="dir-buttons">
@@ -179,7 +233,6 @@
         </div>
       </div>
 
-      <!-- AI 助理：置於頁面最底部，跨欄滿版 -->
       <div class="query-ai-section">
         <hr>
         <h3>🤖 AI 助理</h3>
@@ -198,10 +251,13 @@
         <div id="map-panel">
           <div id="map-panel-header">🚌 台南公車即時地圖</div>
           <div id="map-panel-controls">
-            <input id="map-route-input" type="text" placeholder="篩選路線（留空或輸入「全部」＝顯示全部路線），例：藍幹線, 綠1">
             <div class="map-btn-row">
-              <button id="btn-map-refresh" class="btn">🔄 更新</button>
+              <button id="btn-map-refresh" class="btn">🔄 更新公車位置</button>
               <button id="btn-map-home" class="btn">🏠 回查詢頁</button>
+            </div>
+            <div class="map-toggle-row">
+              <label><input type="checkbox" id="map-show-stops" checked> 顯示站名</label>
+              <label><input type="checkbox" id="map-show-shapes" checked> 顯示路線</label>
             </div>
             <div id="map-caption" class="caption"></div>
           </div>
