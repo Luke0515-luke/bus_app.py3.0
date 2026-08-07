@@ -52,6 +52,8 @@ TAINAN_LAT, TAINAN_LON = 22.9997, 120.2270
 UBIKE_SPEED_KMH = 15  # 估算騎車速度（OSRM 失敗時備用）
 CACHE_FILE = os.path.join(os.path.dirname(__file__), "tainan_stops_cache.json")
 COORDS_CACHE_FILE = os.path.join(os.path.dirname(__file__), "tainan_stops_coords_cache.json")
+# 手動「儲存路線座標到檔案」功能專用的輸出目錄（依需求指定的固定路徑）
+ROUTE_DATA_SAVE_DIR = "/opt/render/project/data/route"
 
 # ── 常數與對照表（與原始 Streamlit 版本完全一致） ─────────
 ROUTE_CATEGORIES = {
@@ -150,6 +152,7 @@ def run_scheduler():
 # 啟動排程執行緒
 scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
 scheduler_thread.start()
+
 
 # 所有設定過的路線（去重、保留順序），用來確保地圖「未篩選」時每條路線都會被繪製，
 # 不會因為該路線目前沒有營運中的公車而被漏掉。
@@ -1026,6 +1029,73 @@ def api_map_data():
         "routes": routes_to_draw,
         "live_routes": sorted(live_route_set),
         "now": datetime.now().strftime("%H:%M:%S"),
+    })
+
+
+@app.route('/api/save_route_data', methods=['POST'])
+def api_save_route_data():
+    """從 TDX 即時抓取指定路線的「路線軌跡（Shape）」與「站牌清單（StopOfRoute）」，
+    把 TDX 回傳的原始 JSON 內容原封不動存成兩份檔案：
+      /opt/render/project/data/route/{路線名稱}_route_shape.json
+      /opt/render/project/data/route/{路線名稱}_route_stop.json
+    """
+    route = (request.json or {}).get('route', '').strip()
+    if not route:
+        return jsonify({"error": "請輸入路線名稱"}), 400
+
+    shape_url = f"https://tdx.transportdata.tw/api/basic/v2/Bus/Shape/City/Tainan/{route}?%24format=JSON"
+    stop_url = f"https://tdx.transportdata.tw/api/basic/v2/Bus/StopOfRoute/City/Tainan/{route}?%24format=JSON"
+
+    shape_res = tdx_get(shape_url, timeout=10, retries=1)
+    stop_res = tdx_get(stop_url, timeout=10, retries=1)
+
+    shape_data = None
+    stop_data = None
+    try:
+        if shape_res is not None:
+            shape_data = shape_res.json()
+    except Exception:
+        shape_data = None
+    try:
+        if stop_res is not None:
+            stop_data = stop_res.json()
+    except Exception:
+        stop_data = None
+
+    if not shape_data and not stop_data:
+        return jsonify({"error": f"無法從 TDX 取得路線「{route}」的軌跡或站牌資料，請確認路線名稱是否正確"}), 404
+
+    try:
+        os.makedirs(ROUTE_DATA_SAVE_DIR, exist_ok=True)
+    except Exception as e:
+        return jsonify({"error": f"無法建立儲存目錄 {ROUTE_DATA_SAVE_DIR}：{e}"}), 500
+
+    shape_path = os.path.join(ROUTE_DATA_SAVE_DIR, f"{route}_route_shape.json")
+    stop_path = os.path.join(ROUTE_DATA_SAVE_DIR, f"{route}_route_stop.json")
+
+    try:
+        with open(shape_path, "w", encoding="utf-8") as f:
+            json.dump(shape_data if shape_data is not None else [], f, ensure_ascii=False, indent=2)
+        with open(stop_path, "w", encoding="utf-8") as f:
+            json.dump(stop_data if stop_data is not None else [], f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        return jsonify({"error": f"寫入檔案失敗：{e}"}), 500
+
+    shape_segments = len(shape_data) if isinstance(shape_data, list) else 0
+    stop_count = 0
+    if isinstance(stop_data, list):
+        for dir_data in stop_data:
+            stop_count += len(dir_data.get("Stops", []))
+
+    return jsonify({
+        "status": "success",
+        "route": route,
+        "shape_file": shape_path,
+        "stop_file": stop_path,
+        "shape_segments": shape_segments,
+        "stop_count": stop_count,
+        "shape_ok": bool(shape_data),
+        "stop_ok": bool(stop_data),
     })
 
 
