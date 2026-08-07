@@ -39,6 +39,7 @@ const state = {
   mapBusData: [],
   mapShapeData: [],
   mapStopData: [],
+  savedRoutes: [],
   leafletMap: null,
   busLayer: null,
   shapeLayer: null,
@@ -601,6 +602,8 @@ async function saveRouteCoords() {
     statusBox.innerHTML =
       `✅ 已儲存<br>路線軌跡：${data.shape_ok ? `${data.shape_segments} 段` : '❌ 抓取失敗'} → ${esc(data.shape_file)}<br>` +
       `站牌清單：${data.stop_ok ? `${data.stop_count} 站` : '❌ 抓取失敗'} → ${esc(data.stop_file)}`;
+    // 存檔成功後立即重新整理地圖資料，讓底下的「已儲存路線」清單馬上出現這條新路線
+    if (data.shape_ok || data.stop_ok) await loadMapData(true);
   } catch (e) {
     statusBox.textContent = `❌ ${e.message}`;
   } finally {
@@ -619,6 +622,7 @@ async function loadMapData(forceRefresh) {
     state.mapShapeData = data.shapes;
     state.mapStopData = data.stops || [];
     state.mapAllRoutes = data.routes;
+    state.savedRoutes = data.saved_routes || [];
     state.mapActiveRoutes = new Set(data.routes); // 預設全部顯示
     el('map-caption').textContent = `資料時間：${data.now}　｜　每次按「🔄 更新」重抓最新位置`;
     drawMapShapes();
@@ -693,6 +697,46 @@ function drawMapBuses() {
     total++;
   });
   el('map-panel-stats').textContent = `顯示 ${state.mapActiveRoutes.size} 條路線・${total} 台公車`;
+  renderMapBusList();
+}
+
+// 最上面的查詢欄（篩選路線）除了在地圖上畫出公車圖示，
+// 同時也把該路線（或該次篩選的每一條路線）上「每一台公車」的最新定位，
+// 以文字清單的方式列出來，不用逐一點地圖上的圓點才看得到。
+function renderMapBusList() {
+  const container = el('map-bus-list');
+  if (!container) return;
+  const inputVal = el('map-route-input').value.trim();
+  if (!inputVal) { container.innerHTML = ''; return; }
+
+  const buses = state.mapBusData
+    .filter(b => state.mapActiveRoutes.has(b.route))
+    .sort((a, b) => a.route.localeCompare(b.route) || String(a.plate).localeCompare(String(b.plate)));
+
+  if (!buses.length) {
+    container.innerHTML = '<div class="warning-box">目前查無這個篩選條件下的公車即時定位（該路線可能暫時沒有營運中的車輛）</div>';
+    return;
+  }
+
+  container.innerHTML = `<div class="caption">🚌 目前共 ${buses.length} 台公車最新定位（點項目可在地圖上定位）：</div>` +
+    buses.map(b => `
+      <div class="stop-item bus-list-item" style="cursor:pointer" data-lat="${b.lat}" data-lon="${b.lon}">
+        <span class="tag" style="background:${b.color}">${esc(b.route)}</span>
+        車牌 <b>${esc(b.plate || '未知')}</b>
+        ・${esc(b.dir)}
+        ・${esc(String(b.speed))} km/h
+        ・📍 ${Number(b.lat).toFixed(5)}, ${Number(b.lon).toFixed(5)}
+      </div>`).join('');
+
+  container.querySelectorAll('.bus-list-item').forEach(item => {
+    item.addEventListener('click', () => {
+      const lat = parseFloat(item.dataset.lat);
+      const lon = parseFloat(item.dataset.lon);
+      if (state.leafletMap && !isNaN(lat) && !isNaN(lon)) {
+        state.leafletMap.flyTo([lat, lon], 17);
+      }
+    });
+  });
 }
 function renderMapPanel(filterText) {
   const list = el('map-route-list');
@@ -714,9 +758,11 @@ function renderMapPanel(filterText) {
     if (filterText && !route.includes(filterText)) return;
     const color = getRouteColor(route);
     const n = cnt[route] || 0;
+    const isSaved = state.savedRoutes.includes(route);
     const item = document.createElement('div');
     item.className = 'route-item' + (state.mapActiveRoutes.has(route) ? ' active' : '');
-    item.innerHTML = `<div class="route-dot" style="background:${color};"></div><span>${esc(route)}</span><span class="route-count">${n}</span>`;
+    item.title = isSaved ? '已儲存路線原始資料（Shape＋StopOfRoute）' : '';
+    item.innerHTML = `<div class="route-dot" style="background:${color};"></div><span>${isSaved ? '💾 ' : ''}${esc(route)}</span><span class="route-count">${n}</span>`;
     item.onclick = () => {
       if (state.mapActiveRoutes.has(route)) state.mapActiveRoutes.delete(route);
       else state.mapActiveRoutes.add(route);
