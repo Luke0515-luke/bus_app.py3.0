@@ -586,7 +586,21 @@ function initMapPageIfNeeded() {
   state.stopLayer = L.layerGroup().addTo(state.leafletMap);
   state.busLayer = L.layerGroup().addTo(state.leafletMap);
   state.leafletMap.on('zoomend', updateStopLabelVisibility);
+  // 「已儲存路線」清單先用一支很輕量的 API 立刻列出來，不用等整張地圖（公車＋路線＋站牌）
+  // 全部抓完才顯示，使用者一打開地圖頁馬上就看得到已經存過檔的路線。
+  loadSavedRoutesOnly();
   loadMapData(false);
+}
+
+// 只拉「已儲存路線」清單（不含地圖上的公車/路線/站牌），一開地圖頁就先顯示出來。
+async function loadSavedRoutesOnly() {
+  try {
+    const data = await api('/api/saved_routes');
+    state.savedRoutes = data.routes || [];
+    renderMapPanel(el('map-search-box').value.trim());
+  } catch (e) {
+    // 忽略，等下面完整的 loadMapData() 回來一樣會補上
+  }
 }
 
 async function saveRouteCoords() {
