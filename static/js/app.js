@@ -129,6 +129,7 @@ function bindStaticEvents() {
 
   el('btn-map-refresh').addEventListener('click', () => loadMapData(true));
   el('map-search-box').addEventListener('input', e => renderMapPanel(e.target.value));
+  el('btn-save-route-coords').addEventListener('click', saveRouteCoords);
 
   el('btn-mobile-menu').addEventListener('click', () => {
     document.body.classList.toggle('sidebar-open');
@@ -578,7 +579,33 @@ function initMapPageIfNeeded() {
   state.shapeLayer = L.layerGroup().addTo(state.leafletMap);
   state.stopLayer = L.layerGroup().addTo(state.leafletMap);
   state.busLayer = L.layerGroup().addTo(state.leafletMap);
+  state.leafletMap.on('zoomend', updateStopLabelVisibility);
   loadMapData(false);
+}
+
+async function saveRouteCoords() {
+  const route = el('save-route-input').value.trim();
+  const statusBox = el('save-route-status');
+  const btn = el('btn-save-route-coords');
+  if (!route) {
+    statusBox.textContent = '⚠️ 請輸入路線名稱';
+    return;
+  }
+  btn.disabled = true;
+  statusBox.textContent = `抓取「${route}」的 Shape 與 StopOfRoute 資料中...`;
+  try {
+    const data = await api('/api/save_route_data', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ route })
+    });
+    statusBox.innerHTML =
+      `✅ 已儲存<br>路線軌跡：${data.shape_ok ? `${data.shape_segments} 段` : '❌ 抓取失敗'} → ${esc(data.shape_file)}<br>` +
+      `站牌清單：${data.stop_ok ? `${data.stop_count} 站` : '❌ 抓取失敗'} → ${esc(data.stop_file)}`;
+  } catch (e) {
+    statusBox.textContent = `❌ ${e.message}`;
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 async function loadMapData(forceRefresh) {
@@ -624,11 +651,25 @@ function drawMapStops() {
   state.mapStopData.forEach(sp => {
     if (!state.mapActiveRoutes.has(sp.route)) return;
     L.circleMarker([sp.lat, sp.lon], {
-      radius: 3.5, weight: 1, color: '#ffffff', opacity: 0.9,
+      radius: 4, weight: 1, color: '#ffffff', opacity: 0.9,
       fillColor: sp.color, fillOpacity: 0.95
-    }).bindTooltip(`${sp.route}｜${sp.name}`, { direction: 'top', sticky: true })
+    })
+      // 常駐標籤：放大到一定程度後才顯示，避免縮小檢視時上千個站名疊在一起看不清楚
+      .bindTooltip(sp.name, {
+        permanent: true, direction: 'right', offset: L.point(7, 0),
+        className: 'stop-label', opacity: 0.9
+      })
+      // 不論目前是否放大，點擊/點選圓點都能直接看到站名（手機點按也適用）
+      .bindPopup(`<b style="color:${sp.color}">${esc(sp.route)}</b><br>🚏 ${esc(sp.name)}`)
       .addTo(state.stopLayer);
   });
+  updateStopLabelVisibility();
+}
+
+function updateStopLabelVisibility() {
+  if (!state.leafletMap) return;
+  const zoom = state.leafletMap.getZoom();
+  state.leafletMap.getContainer().classList.toggle('stops-zoomed-in', zoom >= 15);
 }
 function countByRoute() {
   const cnt = {};
