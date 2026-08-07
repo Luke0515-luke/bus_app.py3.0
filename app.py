@@ -50,10 +50,98 @@ else:
 AUTH_URL = "https://tdx.transportdata.tw/auth/realms/TDXConnect/protocol/openid-connect/token"
 TAINAN_LAT, TAINAN_LON = 22.9997, 120.2270
 UBIKE_SPEED_KMH = 15  # 估算騎車速度（OSRM 失敗時備用）
-CACHE_FILE = os.path.join(os.path.dirname(__file__), "tainan_stops_cache.json")
-COORDS_CACHE_FILE = os.path.join(os.path.dirname(__file__), "tainan_stops_coords_cache.json")
-# 手動「儲存路線座標到檔案」功能專用的輸出目錄（依需求指定的固定路徑）
+# 路線原始資料（站牌 StopOfRoute ＋ 軌跡 Shape）的正式儲存位置。
+# 這個資料夾在 /opt/render/project/data 底下，會被排程每 10 分鐘備份到 GitHub 的
+# backup 分支，即使 Render 重啟、清空硬碟，資料也不會不見——不再使用會消失在
+# Render 硬碟根目錄、不會被備份的暫存快取檔。
 ROUTE_DATA_SAVE_DIR = "/opt/render/project/data/route"
+_route_file_lock = threading.Lock()
+
+
+def _route_stop_file_path(route_name):
+    return os.path.join(ROUTE_DATA_SAVE_DIR, f"{route_name}_route_stop.json")
+
+
+def _route_shape_file_path(route_name):
+    return os.path.join(ROUTE_DATA_SAVE_DIR, f"{route_name}_route_shape.json")
+
+
+def _save_route_json(path, data):
+    """把某路線的 TDX 原始 JSON 寫進 /opt/render/project/data/route，
+    會跟著現有的排程一起被備份到 GitHub，不會因為 Render 重啟而消失。"""
+    with _route_file_lock:
+        try:
+            os.makedirs(ROUTE_DATA_SAVE_DIR, exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"⚠️ 寫入路線資料失敗（{path}）：{e}")
+
+
+def _fetch_and_save_stop_data(route_name):
+    """即時向 TDX 查詢某路線的 StopOfRoute 原始資料，並自動存檔。"""
+    url = f"https://tdx.transportdata.tw/api/basic/v2/Bus/StopOfRoute/City/Tainan/{route_name}?%24format=JSON"
+    res = tdx_get(url, timeout=10, retries=1)
+    if res is None:
+        return None
+    try:
+        data = res.json()
+    except Exception:
+        return None
+    if data:
+        _save_route_json(_route_stop_file_path(route_name), data)
+    return data
+
+
+def _fetch_and_save_shape_data(route_name):
+    """即時向 TDX 查詢某路線的 Shape 原始資料，並自動存檔。"""
+    url = f"https://tdx.transportdata.tw/api/basic/v2/Bus/Shape/City/Tainan/{route_name}?%24format=JSON"
+    res = tdx_get(url, timeout=10, retries=1)
+    if res is None:
+        return None
+    try:
+        data = res.json()
+    except Exception:
+        return None
+    if data:
+        _save_route_json(_route_shape_file_path(route_name), data)
+    return data
+
+
+def load_route_stop_data(route_name):
+    """優先讀取已存檔的 StopOfRoute 資料（會被自動備份到 GitHub）；
+    檔案不存在時即時向 TDX 查一次並自動存檔，之後同一路線就不用再查。"""
+    path = _route_stop_file_path(route_name)
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            if data:
+                return data
+    except (FileNotFoundError, json.JSONDecodeError):
+        pass
+    return _fetch_and_save_stop_data(route_name) or []
+
+
+def load_route_shape_data(route_name):
+    """優先讀取已存檔的 Shape 資料（會被自動備份到 GitHub）；
+    檔案不存在時即時向 TDX 查一次並自動存檔，之後同一路線就不用再查。"""
+    path = _route_shape_file_path(route_name)
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            if data:
+                return data
+    except (FileNotFoundError, json.JSONDecodeError):
+        pass
+    return _fetch_and_save_shape_data(route_name) or []
+
+
+def _invalidate_route_cache(route_name):
+    """清掉某條路線在記憶體暫存（in-memory cache）裡的舊資料，
+    讓下一次查詢立即讀到剛存好的檔案。"""
+    for fn in ("fetch_route_stops", "fetch_route_shape", "fetch_route_stop_positions"):
+        _cache_store.pop(f"{fn}:({route_name!r},):{{}}", None)
+    _cache_store.pop("build_stop_route_index:():{}", None)
 
 # ── 常數與對照表（與原始 Streamlit 版本完全一致） ─────────
 ROUTE_CATEGORIES = {
@@ -138,7 +226,7 @@ async def backup():
             print(f"❌ 備份失敗: {e}")
 
 async def backup_loop():
-    """每 10分鐘執行備份的非同步迴圈"""
+    """每 3 小時執行備份的非同步迴圈"""
     while True:
         await backup()
         await asyncio.sleep(10 * 60)
@@ -307,20 +395,10 @@ def tdx_get(url, timeout=8, retries=1):
 # ── TDX / 第三方資料存取（皆對應原本 st.cache_data 函數）───
 @cached(3600)
 def fetch_route_stops(route_name):
+    data = load_route_stop_data(route_name)
     try:
-        with open(CACHE_FILE, "r", encoding="utf-8") as f:
-            c = json.load(f)
-            if route_name in c and c[route_name]:
-                return c[route_name]
-    except FileNotFoundError:
-        pass
-    url = f"https://tdx.transportdata.tw/api/basic/v2/Bus/StopOfRoute/City/Tainan/{route_name}?%24format=JSON"
-    try:
-        res = requests.get(url, headers=tdx_headers(), timeout=10)
-        if res.status_code == 200:
-            data = res.json()
-            if data:
-                return [s['StopName']['Zh_tw'] for s in data[0]['Stops']]
+        if data:
+            return [s['StopName']['Zh_tw'] for s in data[0]['Stops']]
     except Exception:
         pass
     return []
@@ -389,14 +467,7 @@ def fetch_all_bus_stops():
 
 @cached(3600)
 def fetch_route_shape(route_name):
-    url = f"https://tdx.transportdata.tw/api/basic/v2/Bus/Shape/City/Tainan/{route_name}?%24format=JSON"
-    res = tdx_get(url, timeout=8, retries=1)
-    if res is not None:
-        try:
-            return res.json()
-        except Exception:
-            pass
-    return []
+    return load_route_shape_data(route_name)
 
 
 def _parse_stop_positions_from_stop_of_route(data):
@@ -417,25 +488,13 @@ def _parse_stop_positions_from_stop_of_route(data):
 @cached(3600)
 def fetch_route_stop_positions(route_name):
     """回傳某路線所有站牌的座標，供地圖畫小圓點用。
-    優先讀取本機座標快取（由「系統維護→更新站點快取」建立），
-    這樣地圖頁不必每次都即時打 TDX、也不會因為單次請求逾時/限流而漏站。
-    快取不存在或沒有該路線時才即時向 TDX 查詢（並附重試）。"""
+    優先讀取 /opt/render/project/data/route 底下已存檔的 StopOfRoute 資料
+    （會自動被排程備份到 GitHub），沒有的話即時查 TDX 並自動存檔。"""
+    data = load_route_stop_data(route_name)
     try:
-        with open(COORDS_CACHE_FILE, "r", encoding="utf-8") as f:
-            c = json.load(f)
-            if route_name in c and c[route_name]:
-                return c[route_name]
-    except FileNotFoundError:
-        pass
-
-    url = f"https://tdx.transportdata.tw/api/basic/v2/Bus/StopOfRoute/City/Tainan/{route_name}?%24format=JSON"
-    res = tdx_get(url, timeout=8, retries=1)
-    if res is not None:
-        try:
-            return _parse_stop_positions_from_stop_of_route(res.json())
-        except Exception:
-            pass
-    return []
+        return _parse_stop_positions_from_stop_of_route(data)
+    except Exception:
+        return []
 
 
 def fetch_shapes_and_stops_parallel(routes):
@@ -504,20 +563,34 @@ def get_ubike_near(s_lat, s_lon, stations, avail_map, radius_km=0.3):
 
 
 # ── 進階路線查詢：直達 + 一次轉乘 ───────────────────────────
+def _fetch_all_route_stops_parallel(routes):
+    """平行為多條路線取得站名清單。內部走 fetch_route_stops，
+    每條路線都會優先讀 data/route 裡的存檔，沒有才即時查並自動存檔。"""
+    result = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        futures = {executor.submit(fetch_route_stops, r): r for r in routes}
+        for fut in concurrent.futures.as_completed(futures):
+            r = futures[fut]
+            try:
+                result[r] = fut.result()
+            except Exception:
+                result[r] = []
+    return result
+
+
 @cached(3600)
 def build_stop_route_index():
+    """建立「站名 → 可搭乘路線」索引，供進階查詢（站到站）使用。
+    不依賴手動按「系統維護」：自動走遍全部路線，data/route 裡有存檔的直接用，
+    沒有的即時查詢並自動存檔（存到 /opt/render/project/data/route，會被排程備份）。"""
     index = {}
-    try:
-        with open(CACHE_FILE, "r", encoding="utf-8") as f:
-            cache = json.load(f)
-        for route_name, stops in cache.items():
-            for stop in stops:
-                if stop not in index:
-                    index[stop] = []
-                if route_name not in index[stop]:
-                    index[stop].append(route_name)
-    except FileNotFoundError:
-        pass
+    stops_map = _fetch_all_route_stops_parallel(ALL_ROUTE_NAMES)
+    for route_name, stops in stops_map.items():
+        for stop in stops:
+            if stop not in index:
+                index[stop] = []
+            if route_name not in index[stop]:
+                index[stop].append(route_name)
     return index
 
 
@@ -868,7 +941,7 @@ def api_advanced_search():
         return jsonify({"error": "出發站和目的站不能相同"}), 400
     stop_index = build_stop_route_index()
     if not stop_index:
-        return jsonify({"error": "請先到「系統維護」建立站點快取才能使用進階查詢"}), 400
+        return jsonify({"error": "暫時無法取得站點資料，請稍後再試"}), 400
     directs = find_direct_routes(stop_index, start, end)
     transfers = find_transfer_routes(stop_index, start, end)
     return jsonify({"directs": directs, "transfers": transfers})
@@ -1035,51 +1108,23 @@ def api_map_data():
 @app.route('/api/save_route_data', methods=['POST'])
 def api_save_route_data():
     """從 TDX 即時抓取指定路線的「路線軌跡（Shape）」與「站牌清單（StopOfRoute）」，
-    把 TDX 回傳的原始 JSON 內容原封不動存成兩份檔案：
+    強制重新查詢並把 TDX 回傳的原始 JSON 內容原封不動存成兩份檔案：
       /opt/render/project/data/route/{路線名稱}_route_shape.json
       /opt/render/project/data/route/{路線名稱}_route_stop.json
+    （一般情況下不需要手動按這顆按鈕——每條路線第一次被查詢或在地圖上顯示時，
+    就會自動存檔；這顆按鈕只是用來強制刷新單一路線的最新資料。）
     """
     route = (request.json or {}).get('route', '').strip()
     if not route:
         return jsonify({"error": "請輸入路線名稱"}), 400
 
-    shape_url = f"https://tdx.transportdata.tw/api/basic/v2/Bus/Shape/City/Tainan/{route}?%24format=JSON"
-    stop_url = f"https://tdx.transportdata.tw/api/basic/v2/Bus/StopOfRoute/City/Tainan/{route}?%24format=JSON"
-
-    shape_res = tdx_get(shape_url, timeout=10, retries=1)
-    stop_res = tdx_get(stop_url, timeout=10, retries=1)
-
-    shape_data = None
-    stop_data = None
-    try:
-        if shape_res is not None:
-            shape_data = shape_res.json()
-    except Exception:
-        shape_data = None
-    try:
-        if stop_res is not None:
-            stop_data = stop_res.json()
-    except Exception:
-        stop_data = None
+    shape_data = _fetch_and_save_shape_data(route)
+    stop_data = _fetch_and_save_stop_data(route)
 
     if not shape_data and not stop_data:
         return jsonify({"error": f"無法從 TDX 取得路線「{route}」的軌跡或站牌資料，請確認路線名稱是否正確"}), 404
 
-    try:
-        os.makedirs(ROUTE_DATA_SAVE_DIR, exist_ok=True)
-    except Exception as e:
-        return jsonify({"error": f"無法建立儲存目錄 {ROUTE_DATA_SAVE_DIR}：{e}"}), 500
-
-    shape_path = os.path.join(ROUTE_DATA_SAVE_DIR, f"{route}_route_shape.json")
-    stop_path = os.path.join(ROUTE_DATA_SAVE_DIR, f"{route}_route_stop.json")
-
-    try:
-        with open(shape_path, "w", encoding="utf-8") as f:
-            json.dump(shape_data if shape_data is not None else [], f, ensure_ascii=False, indent=2)
-        with open(stop_path, "w", encoding="utf-8") as f:
-            json.dump(stop_data if stop_data is not None else [], f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        return jsonify({"error": f"寫入檔案失敗：{e}"}), 500
+    _invalidate_route_cache(route)
 
     shape_segments = len(shape_data) if isinstance(shape_data, list) else 0
     stop_count = 0
@@ -1090,8 +1135,8 @@ def api_save_route_data():
     return jsonify({
         "status": "success",
         "route": route,
-        "shape_file": shape_path,
-        "stop_file": stop_path,
+        "shape_file": _route_shape_file_path(route),
+        "stop_file": _route_stop_file_path(route),
         "shape_segments": shape_segments,
         "stop_count": stop_count,
         "shape_ok": bool(shape_data),
@@ -1104,23 +1149,21 @@ def api_save_route_data():
 # ══════════════════════════════════════════════════════════
 @app.route('/api/update_cache', methods=['POST'])
 def api_update_cache():
-    all_cache = {}
-    all_r = list(set(r for rl in ROUTE_CATEGORIES.values() for r in rl))
-    for r_name in all_r:
-        url = f"https://tdx.transportdata.tw/api/basic/v2/Bus/StopOfRoute/City/Tainan/{r_name}?%24format=JSON"
-        try:
-            rr = requests.get(url, headers=tdx_headers(), timeout=10)
-            if rr.status_code == 200:
-                dj = rr.json()
-                if dj:
-                    all_cache[r_name] = [s['StopName']['Zh_tw'] for s in dj[0]['Stops']]
-        except Exception:
-            all_cache[r_name] = []
-    with open(CACHE_FILE, "w", encoding="utf-8") as f:
-        json.dump(all_cache, f, ensure_ascii=False, indent=4)
-    # 清除相關快取，讓下一次查詢立即反映新資料
+    """強制重新抓取『全部路線』的站牌資料並存檔到 /opt/render/project/data/route。
+    一般情況下不需要手動按這顆按鈕——每條路線第一次被查詢或在地圖上顯示時，
+    就會自動存檔；這顆按鈕只是用來一次性強制刷新全部路線的最新資料。"""
+    count = 0
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        futures = {executor.submit(_fetch_and_save_stop_data, r): r for r in ALL_ROUTE_NAMES}
+        for fut in concurrent.futures.as_completed(futures):
+            try:
+                if fut.result():
+                    count += 1
+            except Exception:
+                pass
+    # 清除相關記憶體快取，讓下一次查詢立即反映新資料
     _cache_store.clear()
-    return jsonify({"status": "success", "count": len(all_cache)})
+    return jsonify({"status": "success", "count": count})
 
 
 # ══════════════════════════════════════════════════════════
