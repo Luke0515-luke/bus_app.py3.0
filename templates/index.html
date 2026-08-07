@@ -7,6 +7,27 @@
 <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  /* 地圖頁左側面板本身可以捲動，內容（已儲存路線清單、公車定位清單等）
+     再多也看得到、滑得到，不會被裁掉在畫面下面 */
+  #map-panel {
+    max-height: 100vh;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  /* 公車最新定位清單本身高度上限，超過的用內部捲動，不會把整個面板越撐越長 */
+  #map-bus-list {
+    max-height: 320px;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  /* 已儲存／全部路線清單同樣給一個高度上限＋內部捲動 */
+  #map-route-list {
+    max-height: 280px;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+</style>
 </head>
 <body id="body-root">
 
