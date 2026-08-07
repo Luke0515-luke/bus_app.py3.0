@@ -141,7 +141,7 @@ async def backup_loop():
     """每 3 小時執行備份的非同步迴圈"""
     while True:
         await backup()
-        await asyncio.sleep(3 * 60 * 60)
+        await asyncio.sleep(10 * 60)
 
 def run_scheduler():
     """在獨立執行緒中跑 asyncio 事件迴圈"""
