@@ -540,6 +540,21 @@ def fetch_all_bus_stops():
 
 
 @cached(3600)
+def fetch_all_route_meta():
+    """取得 TDX 上台南市『所有』公車路線的正式登記資料（含正確的 RouteName）。
+    用來在使用者輸入的路線名稱查不到資料時，反查 TDX 真正登記的名稱是什麼，
+    而不是憑猜測去改設定檔。"""
+    url = "https://tdx.transportdata.tw/api/basic/v2/Bus/Route/City/Tainan?%24format=JSON"
+    try:
+        res = requests.get(url, headers=tdx_headers(), timeout=20)
+        if res.status_code == 200:
+            return res.json()
+    except Exception:
+        pass
+    return []
+
+
+@cached(3600)
 def fetch_route_shape(route_name):
     return load_route_shape_data(route_name)
 
@@ -1189,6 +1204,32 @@ def api_saved_routes():
     return jsonify({"routes": sorted(get_saved_route_names())})
 
 
+@app.route('/api/route_lookup')
+def api_route_lookup():
+    """反查 TDX 上『真正登記』的路線名稱是什麼。
+    當某條路線用系統設定的名稱查不到即時定位、也查不到 Shape/StopOfRoute 時，
+    很可能是這個名稱跟 TDX 實際登記的不完全一樣（例如改名、整併過），
+    這裡直接去 TDX 的路線清單裡做包含比對，讓使用者確認正確名稱，而不是用猜的。"""
+    q = request.args.get('q', '').strip()
+    if not q:
+        return jsonify({"matches": []})
+    routes = fetch_all_route_meta()
+    matches = []
+    seen = set()
+    for r in routes:
+        name = (r.get("RouteName") or {}).get("Zh_tw", "")
+        if name and q in name and name not in seen:
+            seen.add(name)
+            ops = r.get("Operators") or []
+            op_names = [(op.get("OperatorName") or {}).get("Zh_tw", "") for op in ops]
+            matches.append({
+                "route_name": name,
+                "route_uid": r.get("RouteUID", ""),
+                "operators": [o for o in op_names if o],
+            })
+    return jsonify({"query": q, "matches": matches, "total_routes_checked": len(routes)})
+
+
 @app.route('/api/save_route_data', methods=['POST'])
 def api_save_route_data():
     """從 TDX 即時抓取指定路線的「路線軌跡（Shape）」與「站牌清單（StopOfRoute）」，
@@ -1206,7 +1247,20 @@ def api_save_route_data():
     stop_data = _fetch_and_save_stop_data(route)
 
     if not shape_data and not stop_data:
-        return jsonify({"error": f"無法從 TDX 取得路線「{route}」的軌跡或站牌資料，請確認路線名稱是否正確"}), 404
+        # 查不到資料時，順便反查 TDX 上名稱相近的路線，幫忙抓出可能是「名稱對不起來」的狀況
+        keyword = route[0] if route else route
+        suggestions = []
+        try:
+            for r in fetch_all_route_meta():
+                name = (r.get("RouteName") or {}).get("Zh_tw", "")
+                if name and keyword in name and name != route and name not in suggestions:
+                    suggestions.append(name)
+        except Exception:
+            pass
+        msg = f"無法從 TDX 取得路線「{route}」的軌跡或站牌資料，請確認路線名稱是否正確"
+        if suggestions:
+            msg += f"。TDX 上名稱相近的路線有：{'、'.join(suggestions[:8])}"
+        return jsonify({"error": msg, "suggestions": suggestions[:8]}), 404
 
     _invalidate_route_cache(route)
 
