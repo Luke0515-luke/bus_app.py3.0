@@ -78,8 +78,28 @@ def _save_route_json(path, data):
             print(f"⚠️ 寫入路線資料失敗（{path}）：{e}")
 
 
+def _entry_route_name(entry):
+    """從 TDX 回傳的單筆資料（StopOfRoute 或 Shape 的其中一筆）取出真正的路線名稱。"""
+    try:
+        return (entry.get("RouteName") or {}).get("Zh_tw", "")
+    except Exception:
+        return ""
+
+
+def _filter_route_entries(data, route_name):
+    """只保留『真的屬於 route_name 這條路線』的資料。
+    TDX 有些端點對路線名稱是用「包含比對」而不是完全比對，例如查詢路線「0」時，
+    可能會把名稱裡有「0」的其他路線（10、70右、0左…）的站牌／軌跡資料也一併回傳，
+    如果不過濾就直接存檔，就會出現『存到其他路線』的錯誤資料。
+    這裡強制比對 RouteName 是否與查詢的 route_name 完全相同，不符的一律捨棄。"""
+    if not isinstance(data, list):
+        return data
+    filtered = [d for d in data if isinstance(d, dict) and _entry_route_name(d) == route_name]
+    return filtered
+
+
 def _fetch_and_save_stop_data(route_name):
-    """即時向 TDX 查詢某路線的 StopOfRoute 原始資料，並自動存檔。"""
+    """即時向 TDX 查詢某路線的 StopOfRoute 原始資料，驗證路線名稱後才存檔。"""
     url = f"https://tdx.transportdata.tw/api/basic/v2/Bus/StopOfRoute/City/Tainan/{route_name}?%24format=JSON"
     res = tdx_get(url, timeout=10, retries=1)
     if res is None:
@@ -88,13 +108,14 @@ def _fetch_and_save_stop_data(route_name):
         data = res.json()
     except Exception:
         return None
+    data = _filter_route_entries(data, route_name)
     if data:
         _save_route_json(_route_stop_file_path(route_name), data)
     return data
 
 
 def _fetch_and_save_shape_data(route_name):
-    """即時向 TDX 查詢某路線的 Shape 原始資料，並自動存檔。"""
+    """即時向 TDX 查詢某路線的 Shape 原始資料，驗證路線名稱後才存檔。"""
     url = f"https://tdx.transportdata.tw/api/basic/v2/Bus/Shape/City/Tainan/{route_name}?%24format=JSON"
     res = tdx_get(url, timeout=10, retries=1)
     if res is None:
@@ -103,6 +124,7 @@ def _fetch_and_save_shape_data(route_name):
         data = res.json()
     except Exception:
         return None
+    data = _filter_route_entries(data, route_name)
     if data:
         _save_route_json(_route_shape_file_path(route_name), data)
     return data
@@ -110,13 +132,17 @@ def _fetch_and_save_shape_data(route_name):
 
 def load_route_stop_data(route_name):
     """優先讀取已存檔的 StopOfRoute 資料（會被自動備份到 GitHub）；
-    檔案不存在時即時向 TDX 查一次並自動存檔，之後同一路線就不用再查。"""
+    檔案不存在、損毀，或內容其實是其他路線的資料（舊版沒有驗證時可能存錯），
+    都會視同快取失效，重新向 TDX 查一次並用驗證過的新資料覆蓋舊檔。"""
     path = _route_stop_file_path(route_name)
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
-            if data:
-                return data
+        valid = _filter_route_entries(data, route_name)
+        if valid:
+            return valid
+        if data:
+            print(f"⚠️「{route_name}」的存檔資料與路線名稱不符（疑似存到其他路線），將重新查詢並覆蓋。")
     except (FileNotFoundError, json.JSONDecodeError):
         pass
     return _fetch_and_save_stop_data(route_name) or []
@@ -124,16 +150,33 @@ def load_route_stop_data(route_name):
 
 def load_route_shape_data(route_name):
     """優先讀取已存檔的 Shape 資料（會被自動備份到 GitHub）；
-    檔案不存在時即時向 TDX 查一次並自動存檔，之後同一路線就不用再查。"""
+    檔案不存在、損毀，或內容其實是其他路線的資料，都會重新向 TDX 查一次並覆蓋舊檔。"""
     path = _route_shape_file_path(route_name)
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
-            if data:
-                return data
+        valid = _filter_route_entries(data, route_name)
+        if valid:
+            return valid
+        if data:
+            print(f"⚠️「{route_name}」的存檔資料與路線名稱不符（疑似存到其他路線），將重新查詢並覆蓋。")
     except (FileNotFoundError, json.JSONDecodeError):
         pass
     return _fetch_and_save_shape_data(route_name) or []
+
+
+def _cleanup_known_bad_route_files():
+    """開機時清掉已知的壞檔：路線名稱字面上是「0」的存檔（0_route_stop.json / 0_route_shape.json）。
+    系統裡從來沒有一條路線正式名稱就叫「0」（實際上是「0左」「0右」），
+    這個檔案如果存在，幾乎可以確定是之前查詢時把其他路線的資料混進來、存錯的殘留檔案。"""
+    for bad_name in ("0",):
+        for path in (_route_stop_file_path(bad_name), _route_shape_file_path(bad_name)):
+            try:
+                if os.path.exists(path):
+                    os.remove(path)
+                    print(f"🗑️ 已刪除錯誤殘留檔案：{path}")
+            except Exception as e:
+                print(f"⚠️ 刪除殘留檔案失敗（{path}）：{e}")
 
 
 def _invalidate_route_cache(route_name):
@@ -142,6 +185,9 @@ def _invalidate_route_cache(route_name):
     for fn in ("fetch_route_stops", "fetch_route_shape", "fetch_route_stop_positions"):
         _cache_store.pop(f"{fn}:({route_name!r},):{{}}", None)
     _cache_store.pop("build_stop_route_index:():{}", None)
+
+
+_cleanup_known_bad_route_files()
 
 # ── 常數與對照表（與原始 Streamlit 版本完全一致） ─────────
 ROUTE_CATEGORIES = {
@@ -251,6 +297,34 @@ for _rl in ROUTE_CATEGORIES.values():
         if _r not in _seen_route_names:
             _seen_route_names.add(_r)
             ALL_ROUTE_NAMES.append(_r)
+
+def get_saved_route_names():
+    """掃描 /opt/render/project/data/route，回傳所有『真的有存檔資料』的路線名稱
+    （不管是不是在系統設定的 ROUTE_CATEGORIES 裡）。"""
+    saved = set()
+    try:
+        for fn in os.listdir(ROUTE_DATA_SAVE_DIR):
+            if fn.endswith("_route_stop.json"):
+                saved.add(fn[: -len("_route_stop.json")])
+            elif fn.endswith("_route_shape.json"):
+                saved.add(fn[: -len("_route_shape.json")])
+    except FileNotFoundError:
+        pass
+    return saved
+
+
+def get_all_known_routes():
+    """系統設定的全部路線（ALL_ROUTE_NAMES）＋ 實際上已經存檔的路線，去重合併。
+    確保就算某條路線不在預設分類表裡，只要曾經存過資料，一樣會被畫在地圖上、
+    出現在『已儲存路線』清單裡。"""
+    combined = list(ALL_ROUTE_NAMES)
+    seen = set(combined)
+    for r in sorted(get_saved_route_names()):
+        if r and r not in seen:
+            seen.add(r)
+            combined.append(r)
+    return combined
+
 
 # ── in-memory 快取（等同於 st.cache_data）────────────────
 _cache_store = {}
@@ -1075,9 +1149,10 @@ def api_map_data():
         })
 
     # 無論該路線目前有沒有營運中的公車，都要能顯示其路線軌跡與站牌，
-    # 因此路線清單一律使用「使用者指定的篩選清單」或「系統設定的全部路線」，
-    # 而不是只看目前有跑的公車有哪些路線。
-    routes_to_draw = filter_list if filter_list else ALL_ROUTE_NAMES
+    # 因此路線清單一律使用「使用者指定的篩選清單」或「系統設定的全部路線＋已存檔路線」，
+    # 而不是只看目前有跑的公車有哪些路線。這樣即使某條路線不在預設分類表裡，
+    # 只要之前用「抓取並儲存路線原始資料」存過，也會出現在地圖與路線清單中。
+    routes_to_draw = filter_list if filter_list else get_all_known_routes()
 
     shape_map, stop_map = fetch_shapes_and_stops_parallel(routes_to_draw)
 
@@ -1100,9 +1175,18 @@ def api_map_data():
         "shapes": shape_features,
         "stops": stop_features,
         "routes": routes_to_draw,
+        "saved_routes": sorted(get_saved_route_names()),
         "live_routes": sorted(live_route_set),
         "now": datetime.now().strftime("%H:%M:%S"),
     })
+
+
+@app.route('/api/saved_routes')
+def api_saved_routes():
+    """列出目前 /opt/render/project/data/route 底下實際已經存檔（Shape 或 StopOfRoute）
+    的路線清單。用於地圖頁面顯示『已儲存路線』按鈕清單——只列出真的有資料的路線，
+    而不是系統設定裡的全部路線清單。"""
+    return jsonify({"routes": sorted(get_saved_route_names())})
 
 
 @app.route('/api/save_route_data', methods=['POST'])
@@ -1154,7 +1238,7 @@ def api_update_cache():
     就會自動存檔；這顆按鈕只是用來一次性強制刷新全部路線的最新資料。"""
     count = 0
     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-        futures = {executor.submit(_fetch_and_save_stop_data, r): r for r in ALL_ROUTE_NAMES}
+        futures = {executor.submit(_fetch_and_save_stop_data, r): r for r in get_all_known_routes()}
         for fut in concurrent.futures.as_completed(futures):
             try:
                 if fut.result():
