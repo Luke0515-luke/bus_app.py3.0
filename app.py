@@ -138,7 +138,7 @@ async def backup():
             print(f"❌ 備份失敗: {e}")
 
 async def backup_loop():
-    """每 3 小時執行備份的非同步迴圈"""
+    """每 10分鐘執行備份的非同步迴圈"""
     while True:
         await backup()
         await asyncio.sleep(10 * 60)
