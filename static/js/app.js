@@ -40,6 +40,7 @@ const state = {
   mapShapeData: [],
   mapStopData: [],
   savedRoutes: [],
+  busListOpen: false,
   leafletMap: null,
   busLayer: null,
   shapeLayer: null,
@@ -129,6 +130,10 @@ function bindStaticEvents() {
   el('btn-tts-stop').addEventListener('click', () => window.speechSynthesis.cancel());
 
   el('btn-map-refresh').addEventListener('click', () => loadMapData(true));
+  el('btn-toggle-bus-list').addEventListener('click', () => {
+    state.busListOpen = !state.busListOpen;
+    renderMapBusList();
+  });
   el('map-search-box').addEventListener('input', e => renderMapPanel(e.target.value));
   el('btn-save-route-coords').addEventListener('click', saveRouteCoords);
 
@@ -701,18 +706,40 @@ function drawMapBuses() {
 }
 
 // 最上面的查詢欄（篩選路線）除了在地圖上畫出公車圖示，
-// 同時也把該路線（或該次篩選的每一條路線）上「每一台公車」的最新定位，
+// 同時也可以把該路線（或該次篩選的每一條路線）上「每一台公車」的最新定位，
 // 以文字清單的方式列出來，不用逐一點地圖上的圓點才看得到。
+// 為了不要一查完就整塊清單直接撐開、把下面「抓取並儲存路線原始資料」的版面往下推，
+// 預設是收合的，清單前面會有一顆按鈕，使用者按了才展開／收合。
 function renderMapBusList() {
+  const btn = el('btn-toggle-bus-list');
   const container = el('map-bus-list');
-  if (!container) return;
-  const inputVal = el('map-route-input').value.trim();
-  if (!inputVal) { container.innerHTML = ''; return; }
+  if (!btn || !container) return;
 
+  const inputVal = el('map-route-input').value.trim();
   const buses = state.mapBusData
     .filter(b => state.mapActiveRoutes.has(b.route))
     .sort((a, b) => a.route.localeCompare(b.route) || String(a.plate).localeCompare(String(b.plate)));
 
+  if (!inputVal) {
+    // 沒有輸入特定路線（顯示全部路線）時，公車數量太多不適合列清單，直接隱藏按鈕與清單
+    btn.classList.add('hidden');
+    container.classList.add('hidden');
+    container.innerHTML = '';
+    state.busListOpen = false;
+    return;
+  }
+
+  btn.classList.remove('hidden');
+  btn.textContent = state.busListOpen
+    ? `🔼 收合公車定位清單（共 ${buses.length} 台）`
+    : `🚌 查看路線上每台公車的最新定位（共 ${buses.length} 台）`;
+
+  if (!state.busListOpen) {
+    container.classList.add('hidden');
+    return;
+  }
+
+  container.classList.remove('hidden');
   if (!buses.length) {
     container.innerHTML = '<div class="warning-box">目前查無這個篩選條件下的公車即時定位（該路線可能暫時沒有營運中的車輛）</div>';
     return;
