@@ -610,9 +610,51 @@ async function saveRouteCoords() {
     // 存檔成功後立即重新整理地圖資料，讓底下的「已儲存路線」清單馬上出現這條新路線
     if (data.shape_ok || data.stop_ok) await loadMapData(true);
   } catch (e) {
-    statusBox.textContent = `❌ ${e.message}`;
+    let html = `❌ ${esc(e.message)}`;
+    const suggestions = e.data && e.data.suggestions;
+    if (suggestions && suggestions.length) {
+      html += '<div class="caption" style="margin-top:6px;">點一下可直接改用這個名稱重新抓取：</div>' +
+        suggestions.map(s => `<button class="btn btn-block route-suggest-save" data-name="${esc(s)}">🚌 ${esc(s)}</button>`).join('');
+    }
+    statusBox.innerHTML = html;
+    statusBox.querySelectorAll('.route-suggest-save').forEach(b => {
+      b.addEventListener('click', () => {
+        el('save-route-input').value = b.dataset.name;
+        saveRouteCoords();
+      });
+    });
   } finally {
     btn.disabled = false;
+  }
+}
+
+// 查不到某條路線的資料時，用字首（例如「藍幹線」取「藍」）反查 TDX 上名稱相近的路線，
+// 讓使用者確認 TDX 真正登記的名稱，而不是憑猜測改設定。
+async function lookupRouteName(routeText) {
+  const resultBox = el('route-lookup-result');
+  if (!resultBox) return;
+  const keyword = (routeText || '').trim().charAt(0) || routeText;
+  resultBox.innerHTML = '<div class="caption">查詢中...</div>';
+  try {
+    const data = await api(`/api/route_lookup?q=${encodeURIComponent(keyword)}`);
+    if (!data.matches || !data.matches.length) {
+      resultBox.innerHTML = `<div class="error-box">TDX 上找不到名稱包含「${esc(keyword)}」的路線，可能是這個字首本身就不對</div>`;
+      return;
+    }
+    resultBox.innerHTML = `<div class="success-box">TDX 上名稱包含「${esc(keyword)}」的路線（點一下可直接改用這個名稱查詢）：</div>` +
+      data.matches.map(m => `
+        <button class="btn btn-block route-suggest" data-name="${esc(m.route_name)}">
+          🚌 ${esc(m.route_name)}${m.operators && m.operators.length ? `（${esc(m.operators.join('、'))}）` : ''}
+        </button>`).join('');
+    resultBox.querySelectorAll('.route-suggest').forEach(b => {
+      b.addEventListener('click', () => {
+        el('map-route-input').value = b.dataset.name;
+        state.busListOpen = true;
+        loadMapData(true);
+      });
+    });
+  } catch (e) {
+    resultBox.innerHTML = `<div class="error-box">查詢失敗：${esc(e.message)}</div>`;
   }
 }
 
@@ -741,7 +783,11 @@ function renderMapBusList() {
 
   container.classList.remove('hidden');
   if (!buses.length) {
-    container.innerHTML = '<div class="warning-box">目前查無這個篩選條件下的公車即時定位（該路線可能暫時沒有營運中的車輛）</div>';
+    container.innerHTML = `
+      <div class="warning-box">目前查無這個篩選條件下的公車即時定位（該路線可能暫時沒有營運中的車輛，也可能是路線名稱跟 TDX 登記的不完全一樣）</div>
+      <button id="btn-route-name-lookup" class="btn btn-block">🔍 查詢 TDX 正確路線名稱</button>
+      <div id="route-lookup-result"></div>`;
+    el('btn-route-name-lookup').addEventListener('click', () => lookupRouteName(inputVal));
     return;
   }
 
@@ -794,6 +840,23 @@ function renderMapPanel(filterText) {
       if (state.mapActiveRoutes.has(route)) state.mapActiveRoutes.delete(route);
       else state.mapActiveRoutes.add(route);
       drawMapShapes(); drawMapStops(); drawMapBuses(); renderMapPanel(filterText);
+    };
+    list.appendChild(item);
+  });
+
+  // 已經存檔過、但目前不在頂端篩選欄範圍內的路線，也一律列在這裡（前面加 💾），
+  // 不會因為上面查詢欄篩選成只剩一條路線，就把其他已儲存的路線從清單裡藏起來。
+  const extraSaved = state.savedRoutes.filter(r => !state.mapAllRoutes.includes(r));
+  extraSaved.forEach(route => {
+    if (filterText && !route.includes(filterText)) return;
+    const color = getRouteColor(route);
+    const item = document.createElement('div');
+    item.className = 'route-item';
+    item.title = '已儲存路線原始資料（Shape＋StopOfRoute）－目前不在篩選範圍內，點一下即可查詢';
+    item.innerHTML = `<div class="route-dot" style="background:${color};"></div><span>💾 ${esc(route)}</span><span class="route-count">－</span>`;
+    item.onclick = () => {
+      el('map-route-input').value = route;
+      loadMapData(true);
     };
     list.appendChild(item);
   });
