@@ -51,6 +51,10 @@ html, body { height: 100%; background: #f5f6fa; color: #222; }
 .query-left { width: 320px; min-width: 280px; }
 .query-right { flex: 1; min-width: 0; }
 
+/* 手機版主頁圖示：電腦版一律隱藏（電腦版用左側常駐選單），詳細查詢內容電腦版一律顯示 */
+#mobile-home-grid { display: none; }
+#query-detail.mobile-collapsed { display: block; }
+
 .info-box { background: #eef2ff; color: #2b3a67; padding: 8px 12px; border-radius: 6px; font-size: 13px; margin: 8px 0; }
 .success-box { background: #e6f9ee; color: #1a7a44; padding: 10px 14px; border-radius: 6px; font-size: 13px; margin: 8px 0; white-space: pre-line; }
 .warning-box { background: #fff6e0; color: #8a6100; padding: 8px 12px; border-radius: 6px; font-size: 13px; margin: 8px 0; }
@@ -63,23 +67,27 @@ html, body { height: 100%; background: #f5f6fa; color: #222; }
 
 .filter-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 8px 0; }
 .filter-btn {
-  background: #fff; border: 1px solid #ccd3e6; border-radius: 6px; padding: 8px 0;
+  background: #eef0f5; color: #333; border: 1px solid #ccd3e6; border-radius: 8px; padding: 8px 0;
   font-size: 13px; cursor: pointer; transition: all .15s; font-weight: bold;
 }
-.filter-btn:hover { background: #eef2ff; }
+.filter-btn:hover { filter: brightness(1.08); }
 
-/* 每個篩選按鈕的文字顏色，對應該路線分類的代表色（跟地圖上的路線顏色一致） */
-.filter-btn[data-f="綠"]   { color: #1e8449; }
-.filter-btn[data-f="橘"]   { color: #ca6f1e; }
-.filter-btn[data-f="棕"]   { color: #8b4513; }
-.filter-btn[data-f="藍"]   { color: #2471a3; }
-.filter-btn[data-f="紅"]   { color: #c0392b; }
-.filter-btn[data-f="黃"]   { color: #b7950b; }
-.filter-btn[data-f="市區"] { color: #2c3e50; }
-.filter-btn[data-f="高鐵"] { color: #34495e; }
-.filter-btn[data-f="觀光"] { color: #0e6655; }
+/* 每個篩選按鍵的底色，對應該路線分類的代表色（跟地圖上的路線顏色一致），文字固定白色以確保可讀性 */
+.filter-btn[data-f="綠"]   { background: #27AE60; color: #fff; border-color: #1e8449; }
+.filter-btn[data-f="橘"]   { background: #E67E22; color: #fff; border-color: #ca6f1e; }
+.filter-btn[data-f="棕"]   { background: #8B4513; color: #fff; border-color: #6e3610; }
+.filter-btn[data-f="藍"]   { background: #2980B9; color: #fff; border-color: #21618c; }
+.filter-btn[data-f="紅"]   { background: #E74C3C; color: #fff; border-color: #c0392b; }
+.filter-btn[data-f="黃"]   { background: #F1C40F; color: #5c4a00; border-color: #b7950b; }
+.filter-btn[data-f="市區"] { background: #2c3e50; color: #fff; border-color: #1b2631; }
+.filter-btn[data-f="高鐵"] { background: #34495e; color: #fff; border-color: #212f3d; }
+.filter-btn[data-f="觀光"] { background: #16a085; color: #fff; border-color: #0e6655; }
 
-.filter-btn.active { background: #4A90E2; color: #fff; border-color: #4A90E2; }
+/* 選取中：用白色內圈當作已選取的標示，底色維持該分類顏色，不會被蓋成純藍色 */
+.filter-btn.active { box-shadow: inset 0 0 0 3px rgba(255,255,255,.85); }
+.filter-btn:not([data-f="綠"]):not([data-f="橘"]):not([data-f="棕"]):not([data-f="藍"]):not([data-f="紅"]):not([data-f="黃"]):not([data-f="市區"]):not([data-f="高鐵"]):not([data-f="觀光"]).active {
+  background: #4A90E2; color: #fff; border-color: #4A90E2;
+}
 
 .gps-coords { font-size: 12px; margin-bottom: 4px; }
 .gps-coords input { width: 130px; padding: 3px 6px; border: 1px solid #ccc; border-radius: 4px; margin-left: 4px; }
@@ -237,6 +245,32 @@ body.font-large .ev-tag, body.font-large .ubike-tag { font-size: 14px !important
   .sidebar-title { font-size: 18px; text-align: center; }
 
   #main-content { height: auto; padding: 16px; padding-top: 64px; }
+
+  /* 手機版主頁：像大台南公車 App 一樣的彩色圖示格子 */
+  #mobile-home-grid {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;
+    margin: 14px 0 22px;
+  }
+  .home-tile {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 6px; aspect-ratio: 1 / 1; border: none; border-radius: 14px;
+    color: #fff; font-size: 13px; font-weight: bold; cursor: pointer;
+    box-shadow: 0 3px 8px rgba(0,0,0,.18); transition: transform .1s;
+  }
+  .home-tile:active { transform: scale(.96); }
+  .home-tile-icon { font-size: 28px; }
+  .home-tile-map       { background: linear-gradient(135deg,#6fcf6f,#2e8b57); }
+  .home-tile-filter    { background: linear-gradient(135deg,#6fa8e8,#2980B9); }
+  .home-tile-nearby    { background: linear-gradient(135deg,#c9a27a,#8B4513); }
+  .home-tile-chat      { background: linear-gradient(135deg,#b39ddb,#6c5ce7); }
+  .home-tile-fav       { background: linear-gradient(135deg,#f2c94c,#E67E22); }
+  .home-tile-yellow    { background: linear-gradient(135deg,#ffd54f,#f1a208); }
+  .home-tile-intercity { background: linear-gradient(135deg,#ef8686,#E74C3C); }
+  .home-tile-adv       { background: linear-gradient(135deg,#4dd0c4,#16a085); }
+  .home-tile-more      { background: linear-gradient(135deg,#8fa3b3,#34495e); }
+
+  /* 詳細查詢內容：手機版預設收合，點主頁圖示後才展開（用 JS 移除 .mobile-collapsed） */
+  #query-detail.mobile-collapsed { display: none; }
 
   /* 查詢頁：左右兩欄改為上下堆疊 */
   .query-columns { flex-direction: column; gap: 18px; }
