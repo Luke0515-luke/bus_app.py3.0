@@ -143,6 +143,64 @@ function bindStaticEvents() {
   el('sidebar-backdrop').addEventListener('click', () => {
     document.body.classList.remove('sidebar-open');
   });
+
+  document.querySelectorAll('.home-tile').forEach(tile => {
+    tile.addEventListener('click', () => handleHomeTile(tile.dataset.action));
+  });
+}
+
+// ── 手機版主頁圖示 ───────────────────────────────────────────
+function openSidebar() {
+  document.body.classList.add('sidebar-open');
+}
+
+function revealQueryDetail(anchorId) {
+  const detail = el('query-detail');
+  detail.classList.remove('mobile-collapsed');
+  if (anchorId) {
+    // 等收合區塊展開、版面重新排好之後再捲動，位置才會準
+    requestAnimationFrame(() => {
+      const target = el(anchorId);
+      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  }
+}
+
+function handleHomeTile(action) {
+  switch (action) {
+    case 'map':
+      switchPage('map');
+      break;
+    case 'filter':
+      revealQueryDetail('filter-anchor');
+      break;
+    case 'nearby':
+      revealQueryDetail('nearby-anchor');
+      break;
+    case 'chat':
+      revealQueryDetail('chat-anchor');
+      break;
+    case 'yellow-bus':
+      revealQueryDetail('yellow-bus-anchor');
+      break;
+    case 'favorites':
+      openSidebar();
+      el('favorites-section').classList.remove('hidden');
+      break;
+    case 'intercity':
+      openSidebar();
+      el('details-intercity').setAttribute('open', '');
+      requestAnimationFrame(() => el('details-intercity').scrollIntoView({ behavior: 'smooth', block: 'start' }));
+      break;
+    case 'advsearch':
+      openSidebar();
+      el('details-advsearch').setAttribute('open', '');
+      requestAnimationFrame(() => el('details-advsearch').scrollIntoView({ behavior: 'smooth', block: 'start' }));
+      break;
+    case 'more':
+      openSidebar();
+      break;
+  }
 }
 
 // ── 字體 / 頁面切換 ─────────────────────────────────────────
