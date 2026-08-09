@@ -7,27 +7,6 @@
 <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<style>
-  /* 地圖頁左側面板本身可以捲動，內容（已儲存路線清單、公車定位清單等）
-     再多也看得到、滑得到，不會被裁掉在畫面下面 */
-  #map-panel {
-    max-height: 100vh;
-    overflow-y: auto;
-    -webkit-overflow-scrolling: touch;
-  }
-  /* 公車最新定位清單本身高度上限，超過的用內部捲動，不會把整個面板越撐越長 */
-  #map-bus-list {
-    max-height: 320px;
-    overflow-y: auto;
-    -webkit-overflow-scrolling: touch;
-  }
-  /* 已儲存／全部路線清單同樣給一個高度上限＋內部捲動 */
-  #map-route-list {
-    max-height: 280px;
-    overflow-y: auto;
-    -webkit-overflow-scrolling: touch;
-  }
-</style>
 </head>
 <body id="body-root">
 
@@ -218,25 +197,27 @@
       <div id="map-app">
         <div id="map-panel">
           <div id="map-panel-header">🚌 台南公車即時地圖</div>
-          <div id="map-panel-controls">
-            <input id="map-route-input" type="text" placeholder="篩選路線（留空或輸入「全部」＝顯示全部路線），例：藍幹線, 綠1">
-            <div class="map-btn-row">
-              <button id="btn-map-refresh" class="btn">🔄 更新</button>
-              <button id="btn-map-home" class="btn">🏠 回查詢頁</button>
+          <div id="map-panel-body">
+            <div id="map-panel-controls">
+              <input id="map-route-input" type="text" placeholder="篩選路線（留空或輸入「全部」＝顯示全部路線），例：藍幹線, 綠1">
+              <div class="map-btn-row">
+                <button id="btn-map-refresh" class="btn">🔄 更新</button>
+                <button id="btn-map-home" class="btn">🏠 回查詢頁</button>
+              </div>
+              <div id="map-caption" class="caption"></div>
+              <button id="btn-toggle-bus-list" class="btn btn-block hidden"></button>
+              <div id="map-bus-list" class="hidden" style="max-height:260px;overflow-y:auto;-webkit-overflow-scrolling:touch;"></div>
+              <hr class="map-panel-divider">
+              <label class="map-panel-label">💾 抓取並儲存路線原始資料（Shape＋StopOfRoute）</label>
+              <input id="save-route-input" type="text" placeholder="輸入路線名稱，例：棕幹線">
+              <button id="btn-save-route-coords" class="btn btn-block">💾 抓取並儲存到檔案</button>
+              <div id="save-route-status" class="caption"></div>
             </div>
-            <div id="map-caption" class="caption"></div>
-            <button id="btn-toggle-bus-list" class="btn btn-block hidden"></button>
-            <div id="map-bus-list" class="hidden"></div>
-            <hr class="map-panel-divider">
-            <label class="map-panel-label">💾 抓取並儲存路線原始資料（Shape＋StopOfRoute）</label>
-            <input id="save-route-input" type="text" placeholder="輸入路線名稱，例：棕幹線">
-            <button id="btn-save-route-coords" class="btn btn-block">💾 抓取並儲存到檔案</button>
-            <div id="save-route-status" class="caption"></div>
+            <div id="map-panel-stats">載入中...</div>
+            <div class="caption" style="padding: 0 12px 6px;">💡 放大地圖至街道等級即可看到各站站名；任何縮放層級皆可點擊圓點查看站名</div>
+            <input id="map-search-box" type="text" placeholder="搜尋路線...">
+            <div id="map-route-list"></div>
           </div>
-          <div id="map-panel-stats">載入中...</div>
-          <div class="caption" style="padding: 0 12px 6px;">💡 放大地圖至街道等級即可看到各站站名；任何縮放層級皆可點擊圓點查看站名</div>
-          <input id="map-search-box" type="text" placeholder="搜尋路線...">
-          <div id="map-route-list"></div>
         </div>
         <div id="leaflet-map"></div>
       </div>
