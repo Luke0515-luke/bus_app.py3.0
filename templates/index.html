@@ -45,7 +45,7 @@
     </div>
 
     <!-- 進階查詢 -->
-    <details class="expander">
+    <details class="expander" id="details-advsearch">
       <summary>🔍 進階查詢（站到站）</summary>
       <p class="caption">輸入起站與終點，找出直達或轉乘一次的路線</p>
       <div id="adv-search-body">
@@ -59,7 +59,7 @@
     </details>
 
     <!-- 客運查詢 -->
-    <details class="expander">
+    <details class="expander" id="details-intercity">
       <summary>🚍 客運查詢</summary>
       <p class="caption">選擇業者與起訖站查詢班次</p>
       <label>選擇客運業者</label>
@@ -92,10 +92,44 @@
     <section id="page-query" class="page">
       <h2>🚌 台南公車即時時刻查詢</h2>
 
+      <!-- 手機版主頁圖示（電腦版不會顯示，一律用左側常駐選單） -->
+      <div id="mobile-home-grid">
+        <button class="home-tile home-tile-map" data-action="map">
+          <span class="home-tile-icon">🚌</span><span>動態公車</span>
+        </button>
+        <button class="home-tile home-tile-filter" data-action="filter">
+          <span class="home-tile-icon">🔍</span><span>路線篩選</span>
+        </button>
+        <button class="home-tile home-tile-nearby" data-action="nearby">
+          <span class="home-tile-icon">📍</span><span>附近站牌</span>
+        </button>
+        <button class="home-tile home-tile-chat" data-action="chat">
+          <span class="home-tile-icon">🤖</span><span>AI 對話</span>
+        </button>
+        <button class="home-tile home-tile-fav" data-action="favorites">
+          <span class="home-tile-icon">⭐</span><span>我的最愛</span>
+        </button>
+        <button class="home-tile home-tile-yellow" data-action="yellow-bus">
+          <span class="home-tile-icon">🚕</span><span>小黃公車</span>
+        </button>
+        <button class="home-tile home-tile-intercity" data-action="intercity">
+          <span class="home-tile-icon">🚍</span><span>客運查詢</span>
+        </button>
+        <button class="home-tile home-tile-adv" data-action="advsearch">
+          <span class="home-tile-icon">🔎</span><span>站到站查詢</span>
+        </button>
+        <button class="home-tile home-tile-more" data-action="more">
+          <span class="home-tile-icon">☰</span><span>更多設定</span>
+        </button>
+      </div>
+
+      <!-- 詳細查詢內容：手機版預設收合在主頁圖示後面，點圖示才會展開＋捲動過去；電腦版一律顯示 -->
+      <div id="query-detail" class="mobile-collapsed">
+
       <div class="query-columns">
         <!-- 左欄：路線篩選 -->
         <div class="query-left">
-          <h3>🔍 路線篩選</h3>
+          <h3 id="filter-anchor">🔍 路線篩選</h3>
           <p class="caption">點選顏色或數字篩選：</p>
 
           <div class="filter-grid">
@@ -141,7 +175,7 @@
 
           <hr>
 
-          <h3>📍 附近公車站</h3>
+          <h3 id="nearby-anchor">📍 附近公車站</h3>
           <button id="btn-gps" class="btn btn-block">📡 自動取得座標</button>
           <div class="gps-coords">
             緯度：<input id="lat-disp" readonly placeholder="點上方取得">
@@ -179,10 +213,17 @@
         </div>
       </div>
 
+      <!-- 小黃公車查詢（功能開發中：等資料來源確認後補上真正的查詢邏輯） -->
+      <div id="yellow-bus-section">
+        <hr>
+        <h3 id="yellow-bus-anchor">🚕 小黃公車查詢</h3>
+        <div class="info-box">此功能開發中，用法將會跟一般公車查詢一致（選路線 → 選等候站/目的地 → 看即時動態）。</div>
+      </div>
+
       <!-- AI 助理：置於頁面最底部，跨欄滿版 -->
       <div class="query-ai-section">
         <hr>
-        <h3>🤖 AI 助理</h3>
+        <h3 id="chat-anchor">🤖 AI 助理</h3>
         <div class="caption">目前對話：<b id="chat-current-title"></b></div>
         <div id="chat-messages"></div>
         <div class="chat-input-row">
@@ -190,6 +231,8 @@
           <button id="btn-chat-send" class="btn">送出</button>
         </div>
       </div>
+
+      </div><!-- /#query-detail -->
     </section>
 
     <!-- ─────────── 地圖頁面 ─────────── -->
