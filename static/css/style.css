@@ -64,9 +64,21 @@ html, body { height: 100%; background: #f5f6fa; color: #222; }
 .filter-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 8px 0; }
 .filter-btn {
   background: #fff; border: 1px solid #ccd3e6; border-radius: 6px; padding: 8px 0;
-  font-size: 13px; cursor: pointer; transition: all .15s;
+  font-size: 13px; cursor: pointer; transition: all .15s; font-weight: bold;
 }
 .filter-btn:hover { background: #eef2ff; }
+
+/* 每個篩選按鈕的文字顏色，對應該路線分類的代表色（跟地圖上的路線顏色一致） */
+.filter-btn[data-f="綠"]   { color: #1e8449; }
+.filter-btn[data-f="橘"]   { color: #ca6f1e; }
+.filter-btn[data-f="棕"]   { color: #8b4513; }
+.filter-btn[data-f="藍"]   { color: #2471a3; }
+.filter-btn[data-f="紅"]   { color: #c0392b; }
+.filter-btn[data-f="黃"]   { color: #b7950b; }
+.filter-btn[data-f="市區"] { color: #2c3e50; }
+.filter-btn[data-f="高鐵"] { color: #34495e; }
+.filter-btn[data-f="觀光"] { color: #0e6655; }
+
 .filter-btn.active { background: #4A90E2; color: #fff; border-color: #4A90E2; }
 
 .gps-coords { font-size: 12px; margin-bottom: 4px; }
@@ -153,15 +165,21 @@ body.font-large .ev-tag, body.font-large .ubike-tag { font-size: 14px !important
 #page-map { padding: 0; margin: -24px -28px; }
 #map-app { display: flex; height: 100vh; overflow: hidden; background: #1a1a2e; }
 #map-panel { width: 240px; min-width: 240px; background: #16213e; color: #eee; display: flex; flex-direction: column; overflow: hidden; border-right: 1px solid #0f3460; }
-#map-panel-header { padding: 12px; background: #0f3460; font-weight: bold; font-size: 14px; color: #fff; }
+#map-panel-header { padding: 12px; background: #0f3460; font-weight: bold; font-size: 14px; color: #fff; flex-shrink: 0; }
+/* 面板內容整個當成同一個可捲動區塊（只有最上面的標題列固定），
+   不論是路線清單、公車定位清單、或存檔狀態訊息變多長，都滑得到，不會被裁掉。 */
+#map-panel-body { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; }
 #map-panel-controls { padding: 8px 12px; border-bottom: 1px solid #0f3460; }
 #map-panel-controls input { width: 100%; padding: 6px 8px; border-radius: 6px; border: 1px solid #0f3460; background: #1a1a2e; color: #eee; font-size: 12px; margin-bottom: 6px; }
 .map-btn-row { display: flex; gap: 6px; }
 .map-btn-row .btn { flex: 1; font-size: 12px; padding: 6px 4px; }
 #map-caption { margin-top: 6px; font-size: 11px; }
+/* 公車最新定位清單自己有高度上限＋內部捲動（跟 #chat-messages 同一種做法），
+   這樣就算篩選出十幾台公車，也不會把下面的路線清單一路往下推得老遠。 */
+#map-bus-list { max-height: 260px; overflow-y: auto; -webkit-overflow-scrolling: touch; margin: 6px 0 2px; border-radius: 6px; }
 #map-panel-stats { padding: 8px 12px; font-size: 12px; color: #aaa; border-bottom: 1px solid #0f3460; }
 #map-search-box { margin: 8px; padding: 6px 8px; border-radius: 6px; border: 1px solid #0f3460; background: #1a1a2e; color: #eee; font-size: 12px; width: calc(100% - 16px); }
-#map-route-list { flex: 1; overflow-y: auto; padding: 4px 0; }
+#map-route-list { padding: 4px 0; }
 .route-item { display: flex; align-items: center; padding: 6px 12px; cursor: pointer; font-size: 13px; border-bottom: 1px solid #0f3460; transition: background 0.15s; }
 .route-item:hover { background: #0f3460; }
 .route-item.active { background: #0f3460; }
@@ -224,8 +242,8 @@ body.font-large .ev-tag, body.font-large .ubike-tag { font-size: 14px !important
   .query-columns { flex-direction: column; gap: 18px; }
   .query-left, .query-right { width: 100%; min-width: 0; }
 
-  .filter-grid { grid-template-columns: repeat(4, 1fr); gap: 5px; }
-  .filter-btn { padding: 10px 0; font-size: 14px; }
+  .filter-grid { grid-template-columns: repeat(4, 1fr); gap: 6px; }
+  .filter-btn { padding: 10px 0; font-size: 13px; }
 
   .dir-buttons { flex-direction: column; }
   .dir-btn { min-width: 0; }
@@ -261,7 +279,8 @@ body.font-large .ev-tag, body.font-large .ubike-tag { font-size: 14px !important
   .sidebar-title { font-size: 16px; }
   #main-content h2 { font-size: 18px; }
 
-  .filter-grid { grid-template-columns: repeat(3, 1fr); }
+  .filter-grid { grid-template-columns: repeat(4, 1fr); gap: 5px; }
+  .filter-btn { padding: 8px 0; font-size: 12px; }
 
   .station-info { gap: 5px; }
   .bus-tag, .wheelchair-tag, .no-wheelchair-tag, .ev-tag, .ubike-tag {
