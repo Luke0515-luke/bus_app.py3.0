@@ -753,12 +753,15 @@ def check_ubike_suggestion(start_st, end_st, stop_coord_map, ub_stations, ub_ava
 
 
 def eta_status_text(eta, status):
-    """對應原本時間軸上的狀態文字與 badge 樣式"""
-    if eta is not None and status == 0:
+    """對應時間軸上的狀態文字與 badge 樣式。
+    原則：只要 TDX 有給實際預估時間（eta 不是 None），就一定要顯示出來，
+    不能因為 StopStatus 剛好不是 0（例如 TDX 資料本身標記怪怪的）就被蓋成「尚未發車」。
+    只有真的完全沒有 eta 資料時，才退回用 StopStatus 判斷文字。"""
+    if eta is not None:
         if eta <= 120:
             return "即將進站", "ts-orange"
         return f"{eta // 60} 分鐘", "ts-green"
-    elif status == 1:
+    if status == 1:
         return "尚未發車", "ts-gray"
     elif status == 2:
         return "交管不停靠", "ts-gray"
@@ -766,6 +769,9 @@ def eta_status_text(eta, status):
         return "末班車已過", "ts-red"
     elif status == 4:
         return "今日停駛", "ts-red"
+    elif status == 0:
+        # TDX 標記這站是正常營運狀態，只是暫時沒有可用的預估到站時間（不代表沒發車）
+        return "營運中（無預估時間）", "ts-gray"
     return "尚未發車", "ts-gray"
 
 
@@ -1114,13 +1120,15 @@ def api_intercity_detail():
         for s in dir_data.get("Stops", []):
             sn = s.get("StopName", {}).get("Zh_tw", "")
             eta_s, status = eta_map.get(sn, (None, 1))
-            if eta_s is not None and status == 0:
+            if eta_s is not None:
                 t = "即將進站" if eta_s <= 120 else f"{eta_s // 60} 分鐘"
                 icon = "🟢"
             elif status == 3:
                 t, icon = "末班車已過", "⚫"
             elif status == 4:
                 t, icon = "今日停駛", "🔴"
+            elif status == 0:
+                t, icon = "營運中（無預估時間）", "⚪"
             else:
                 t, icon = "尚未發車", "⚪"
             out.append({"name": sn, "text": t, "icon": icon})
@@ -1202,6 +1210,89 @@ def api_saved_routes():
     的路線清單。用於地圖頁面顯示『已儲存路線』按鈕清單——只列出真的有資料的路線，
     而不是系統設定裡的全部路線清單。"""
     return jsonify({"routes": sorted(get_saved_route_names())})
+
+
+_YELLOW_BUS_OPERATOR_KEYWORDS = ("大車隊", "皇冠交通", "衛星")  # 台一大車隊／中華衛星台南車隊（皇冠交通）
+
+
+@app.route('/api/yellow_bus_routes')
+def api_yellow_bus_routes():
+    """列出台南『小黃公車』的路線清單。
+    小黃公車本質上是用計程車營運一般公車路線，用的仍然是同一套 TDX 公車 API
+    （StopOfRoute／Shape／即時動態），差別只在營運業者是台一大車隊／中華衛星台南車隊
+    （皇冠交通），所以這裡直接用 TDX 路線清單的『營運業者』欄位反查，
+    不用另外接一套 API，路線異動時也不用手動維護清單。"""
+    routes = fetch_all_route_meta()
+    result = []
+    seen = set()
+    for r in routes:
+        name = (r.get("RouteName") or {}).get("Zh_tw", "")
+        ops = r.get("Operators") or []
+        op_names = [(op.get("OperatorName") or {}).get("Zh_tw", "") for op in ops]
+        if not name or name in seen:
+            continue
+        if any(any(kw in on for kw in _YELLOW_BUS_OPERATOR_KEYWORDS) for on in op_names):
+            seen.add(name)
+            result.append({"route_name": name, "operators": [o for o in op_names if o]})
+    result.sort(key=lambda x: x["route_name"])
+    return jsonify({"routes": result, "total": len(result)})
+
+
+@cached(600)
+def fetch_route_schedule(route_name):
+    """取得某路線的固定時刻表（TDX Bus/Schedule）。
+    小黃公車、支線公車大多是固定班次時刻，跟幹線那種『依班距發車』不一樣，
+    所以另外用這支端點取時刻表，而不是即時動態。"""
+    url = f"https://tdx.transportdata.tw/api/basic/v2/Bus/Schedule/City/Tainan/{route_name}?%24format=JSON"
+    try:
+        res = requests.get(url, headers=tdx_headers(), timeout=15)
+        if res.status_code == 200:
+            return res.json()
+    except Exception:
+        pass
+    return []
+
+
+@app.route('/api/timetable')
+def api_timetable():
+    """回傳某路線的固定時刻表，依方向（去程/回程）＋平日/假日整理成班次時間清單。"""
+    route = request.args.get('route', '').strip()
+    if not route:
+        return jsonify({"error": "缺少路線名稱"}), 400
+    raw = fetch_route_schedule(route)
+    if not raw:
+        return jsonify({"route": route, "directions": [], "has_data": False,
+                         "message": "TDX 目前查不到這條路線的固定時刻表（可能是依班距發車的幹線，沒有公告時刻表）"})
+
+    directions = []
+    for entry in raw:
+        try:
+            direction = entry.get("Direction", 0)
+            dest = (entry.get("DestinationStopNameZh") or
+                    (entry.get("SubRouteName") or {}).get("Zh_tw") or "")
+            timetables = entry.get("Timetables", [])
+            # 依服務日曆（平日/假日/全週…）分組，每組列出所有發車時間
+            groups = {}
+            for t in timetables:
+                svc = (t.get("ServiceDay") or {})
+                label_bits = []
+                for k, zh in (("Monday", "一"), ("Tuesday", "二"), ("Wednesday", "三"),
+                              ("Thursday", "四"), ("Friday", "五"), ("Saturday", "六"), ("Sunday", "日")):
+                    if svc.get(k):
+                        label_bits.append(zh)
+                label = "、".join(label_bits) if label_bits else "每日"
+                groups.setdefault(label, []).append(t.get("DepartureTime", ""))
+            for label, times in groups.items():
+                times.sort()
+            directions.append({
+                "direction": direction,
+                "destination": dest,
+                "groups": [{"days": k, "times": v} for k, v in groups.items()],
+            })
+        except Exception:
+            continue
+
+    return jsonify({"route": route, "directions": directions, "has_data": bool(directions)})
 
 
 @app.route('/api/route_lookup')
