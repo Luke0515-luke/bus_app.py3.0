@@ -75,6 +75,17 @@ function bindStaticEvents() {
   el('btn-font-toggle').addEventListener('click', toggleFont);
   el('btn-page-toggle').addEventListener('click', togglePage);
   el('btn-map-home').addEventListener('click', () => switchPage('query'));
+  el('btn-back-home').addEventListener('click', showHome);
+
+  el('yellow-bus-select').addEventListener('change', () => {
+    const route = el('yellow-bus-select').value;
+    if (route) selectRouteByName(route);
+  });
+  el('btn-show-timetable').addEventListener('click', () => {
+    const box = el('timetable-box');
+    if (!box.classList.contains('hidden')) { box.classList.add('hidden'); return; }
+    if (state.routeChoice) loadTimetable(state.routeChoice);
+  });
 
   document.querySelectorAll('.filter-btn').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -149,16 +160,24 @@ function bindStaticEvents() {
   });
 }
 
-// ── 手機版主頁圖示 ───────────────────────────────────────────
+// ── 主頁圖示／子頁面導覽 ─────────────────────────────────────
 function openSidebar() {
   document.body.classList.add('sidebar-open');
 }
 
-function revealQueryDetail(anchorId) {
-  const detail = el('query-detail');
-  detail.classList.remove('mobile-collapsed');
+function showHome() {
+  el('mobile-home-grid').classList.remove('hidden');
+  el('subpage-container').classList.add('hidden');
+  document.querySelectorAll('.subpage').forEach(s => s.classList.add('hidden'));
+  el('yellow-bus-picker').classList.add('hidden');
+}
+
+function showSubpage(id, anchorId) {
+  el('mobile-home-grid').classList.add('hidden');
+  el('subpage-container').classList.remove('hidden');
+  document.querySelectorAll('.subpage').forEach(s => s.classList.toggle('hidden', s.id !== id));
+  window.scrollTo({ top: 0, behavior: 'auto' });
   if (anchorId) {
-    // 等收合區塊展開、版面重新排好之後再捲動，位置才會準
     requestAnimationFrame(() => {
       const target = el(anchorId);
       if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -166,22 +185,26 @@ function revealQueryDetail(anchorId) {
   }
 }
 
-function handleHomeTile(action) {
+async function handleHomeTile(action) {
   switch (action) {
     case 'map':
       switchPage('map');
       break;
     case 'filter':
-      revealQueryDetail('filter-anchor');
+      el('yellow-bus-picker').classList.add('hidden');
+      showSubpage('subpage-route', 'filter-anchor');
       break;
     case 'nearby':
-      revealQueryDetail('nearby-anchor');
+      el('yellow-bus-picker').classList.add('hidden');
+      showSubpage('subpage-route', 'nearby-anchor');
       break;
     case 'chat':
-      revealQueryDetail('chat-anchor');
+      showSubpage('subpage-chat', 'chat-anchor');
       break;
     case 'yellow-bus':
-      revealQueryDetail('yellow-bus-anchor');
+      showSubpage('subpage-route', 'yellow-bus-anchor');
+      el('yellow-bus-picker').classList.remove('hidden');
+      loadYellowBusRoutes();
       break;
     case 'favorites':
       openSidebar();
@@ -200,6 +223,49 @@ function handleHomeTile(action) {
     case 'more':
       openSidebar();
       break;
+  }
+}
+
+// ── 小黃公車 ─────────────────────────────────────────────
+let _yellowBusLoaded = false;
+async function loadYellowBusRoutes() {
+  if (_yellowBusLoaded) return;
+  const sel = el('yellow-bus-select');
+  const statusBox = el('yellow-bus-status');
+  statusBox.textContent = '路線清單載入中...';
+  try {
+    const data = await api('/api/yellow_bus_routes');
+    sel.innerHTML = '<option value="">請選擇路線...</option>' +
+      data.routes.map(r => `<option value="${esc(r.route_name)}">${esc(r.route_name)}</option>`).join('');
+    statusBox.textContent = `共 ${data.total} 條小黃公車路線（資料來自 TDX，依營運業者自動判斷）`;
+    _yellowBusLoaded = true;
+  } catch (e) {
+    statusBox.textContent = `❌ 路線清單載入失敗：${e.message}`;
+  }
+}
+
+// ── 固定時刻表 ────────────────────────────────────────────
+async function loadTimetable(route) {
+  const box = el('timetable-box');
+  box.classList.remove('hidden');
+  box.innerHTML = '<div class="caption">時刻表載入中...</div>';
+  try {
+    const data = await api(`/api/timetable?route=${encodeURIComponent(route)}`);
+    if (!data.has_data) {
+      box.innerHTML = `<div class="warning-box">${esc(data.message || '查無這條路線的固定時刻表')}</div>`;
+      return;
+    }
+    box.innerHTML = data.directions.map(d => `
+      <div class="timetable-direction">
+        <div class="timetable-dir-title">${d.direction === 0 ? '➡️ 去程' : '⬅️ 回程'}${d.destination ? '　往 ' + esc(d.destination) : ''}</div>
+        ${d.groups.map(g => `
+          <div class="timetable-group">
+            <div class="timetable-days">${esc(g.days)}</div>
+            <div class="timetable-times">${g.times.map(t => `<span class="timetable-time">${esc(t)}</span>`).join('')}</div>
+          </div>`).join('')}
+      </div>`).join('') || '<div class="info-box">這條路線目前沒有公告固定時刻表</div>';
+  } catch (e) {
+    box.innerHTML = `<div class="error-box">❌ 時刻表載入失敗：${esc(e.message)}</div>`;
   }
 }
 
@@ -231,7 +297,25 @@ async function loadFilterRoutes(filterVal) {
   sel.innerHTML = '<option value="">請選擇或輸入路線...</option>' +
     data.routes.map(r => `<option value="${esc(r)}">${esc(r)}</option>`).join('');
   if (data.routes.includes(prev)) sel.value = prev;
-  el('filter-status').textContent = filterVal ? `篩選：【${filterVal}】` : '顯示：全部路線';
+  el('filter-status').textContent = filterVal ? `篩選：【${filterVal}】（共 ${data.routes.length} 條）` : '顯示：全部路線';
+
+  // 直接把篩選結果列成一排可點的路線標籤，不用打開下拉選單也看得出來真的有篩選、篩到哪些路線
+  const chipsBox = el('filter-route-chips');
+  if (!filterVal) {
+    chipsBox.innerHTML = '';
+  } else if (!data.routes.length) {
+    chipsBox.innerHTML = '<div class="warning-box">這個篩選條件下沒有符合的路線</div>';
+  } else {
+    chipsBox.innerHTML = data.routes.map(r =>
+      `<button type="button" class="route-chip" data-route="${esc(r)}" style="background:${getRouteColor(r)}">${esc(r)}</button>`
+    ).join('');
+    chipsBox.querySelectorAll('.route-chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        sel.value = chip.dataset.route;
+        onRouteSelect();
+      });
+    });
+  }
 }
 
 async function onRouteSelect() {
@@ -241,15 +325,20 @@ async function onRouteSelect() {
   el('status-box').classList.add('hidden');
   el('weather-box').classList.add('hidden');
   el('status-empty').classList.remove('hidden');
+  el('timetable-box').classList.add('hidden');
+  el('timetable-box').innerHTML = '';
 
   if (!route) {
     el('btn-fav-toggle').classList.add('hidden');
+    el('btn-show-timetable').classList.add('hidden');
     el('route-hint').textContent = '請選擇路線';
     el('route-hint').classList.remove('hidden');
     return;
   }
   el('route-hint').classList.add('hidden');
   el('btn-fav-toggle').classList.remove('hidden');
+  el('btn-show-timetable').classList.remove('hidden');
+  el('btn-show-timetable').textContent = '📅 查看固定時刻表';
   refreshFavToggleLabel();
 
   const data = await api(`/api/route_stops?route=${encodeURIComponent(route)}`);
@@ -637,7 +726,7 @@ function initMapPageIfNeeded() {
   if (state.mapInited) { loadMapData(false); return; }
   state.mapInited = true;
   state.leafletMap = L.map('leaflet-map', { zoomControl: true, preferCanvas: true }).setView([22.9997, 120.2270], 13);
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
     attribution: '© OpenStreetMap © CARTO', subdomains: 'abcd', maxZoom: 19
   }).addTo(state.leafletMap);
   state.shapeLayer = L.layerGroup().addTo(state.leafletMap);
