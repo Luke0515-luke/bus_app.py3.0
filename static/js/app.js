@@ -26,7 +26,7 @@ function getRouteColor(name) {
 const state = {
   fontLarge: false,
   currentPage: 'query',
-  selectedFilter: null,
+  selectedFilters: new Set(),
   routeChoice: '',
   dirToggle: '去程',
   destNames: { 去程: '去程', 回程: '回程' },
@@ -89,16 +89,22 @@ function bindStaticEvents() {
 
   document.querySelectorAll('.filter-btn').forEach(btn => {
     btn.addEventListener('click', () => {
-      state.selectedFilter = btn.dataset.f;
-      document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      loadFilterRoutes(state.selectedFilter);
+      const f = btn.dataset.f;
+      // 多選：點一下切換這個篩選條件的選取狀態，其他已選的條件維持不變
+      if (state.selectedFilters.has(f)) {
+        state.selectedFilters.delete(f);
+        btn.classList.remove('active');
+      } else {
+        state.selectedFilters.add(f);
+        btn.classList.add('active');
+      }
+      loadFilterRoutes([...state.selectedFilters]);
     });
   });
   el('btn-clear-filter').addEventListener('click', () => {
-    state.selectedFilter = null;
+    state.selectedFilters.clear();
     document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
-    loadFilterRoutes(null);
+    loadFilterRoutes([]);
   });
 
   el('route-select').addEventListener('change', onRouteSelect);
@@ -141,6 +147,7 @@ function bindStaticEvents() {
   el('btn-tts-stop').addEventListener('click', () => window.speechSynthesis.cancel());
 
   el('btn-map-refresh').addEventListener('click', () => loadMapData(true));
+  el('map-route-input').addEventListener('keydown', e => { if (e.key === 'Enter') loadMapData(true); });
   el('btn-toggle-bus-list').addEventListener('click', () => {
     state.busListOpen = !state.busListOpen;
     renderMapBusList();
@@ -289,19 +296,22 @@ function switchPage(page) {
 }
 
 // ── 路線篩選 / 選擇 ───────────────────────────────────────
-async function loadFilterRoutes(filterVal) {
-  const url = filterVal ? `/api/filter_routes?filter=${encodeURIComponent(filterVal)}` : '/api/filter_routes';
+async function loadFilterRoutes(filterVals) {
+  const list = Array.isArray(filterVals) ? filterVals : (filterVals ? [filterVals] : []);
+  const url = list.length ? `/api/filter_routes?filter=${encodeURIComponent(list.join(','))}` : '/api/filter_routes';
   const data = await api(url);
   const sel = el('route-select');
   const prev = sel.value;
   sel.innerHTML = '<option value="">請選擇或輸入路線...</option>' +
     data.routes.map(r => `<option value="${esc(r)}">${esc(r)}</option>`).join('');
   if (data.routes.includes(prev)) sel.value = prev;
-  el('filter-status').textContent = filterVal ? `篩選：【${filterVal}】（共 ${data.routes.length} 條）` : '顯示：全部路線';
+  el('filter-status').textContent = list.length
+    ? `篩選：【${list.join('、')}】（共 ${data.routes.length} 條）`
+    : '顯示：全部路線';
 
   // 直接把篩選結果列成一排可點的路線標籤，不用打開下拉選單也看得出來真的有篩選、篩到哪些路線
   const chipsBox = el('filter-route-chips');
-  if (!filterVal) {
+  if (!list.length) {
     chipsBox.innerHTML = '';
   } else if (!data.routes.length) {
     chipsBox.innerHTML = '<div class="warning-box">這個篩選條件下沒有符合的路線</div>';
@@ -530,7 +540,7 @@ function renderRecent() {
 
 async function selectRouteByName(route) {
   document.body.classList.remove('sidebar-open');
-  state.selectedFilter = null;
+  state.selectedFilters.clear();
   document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
   await loadFilterRoutes(null);
   const sel = el('route-select');
@@ -726,8 +736,8 @@ function initMapPageIfNeeded() {
   if (state.mapInited) { loadMapData(false); return; }
   state.mapInited = true;
   state.leafletMap = L.map('leaflet-map', { zoomControl: true, preferCanvas: true }).setView([22.9997, 120.2270], 13);
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-    attribution: '© OpenStreetMap © CARTO', subdomains: 'abcd', maxZoom: 19
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap contributors', subdomains: 'abc', maxZoom: 19
   }).addTo(state.leafletMap);
   state.shapeLayer = L.layerGroup().addTo(state.leafletMap);
   state.stopLayer = L.layerGroup().addTo(state.leafletMap);
@@ -1016,7 +1026,12 @@ function renderMapPanel(filterText) {
     item.title = '已儲存路線原始資料（Shape＋StopOfRoute）－目前不在篩選範圍內，點一下即可查詢';
     item.innerHTML = `<div class="route-dot" style="background:${color};"></div><span>💾 ${esc(route)}</span><span class="route-count">－</span>`;
     item.onclick = () => {
-      el('map-route-input').value = route;
+      // 用「加入」而不是「取代」：把這條路線併進目前查詢欄的清單，
+      // 這樣才能一次累加選取多條路線一起顯示，不會每點一條就把前面選的路線洗掉。
+      const inp = el('map-route-input');
+      const existing = inp.value.split(/[,，]/).map(s => s.trim()).filter(Boolean);
+      if (!existing.includes(route)) existing.push(route);
+      inp.value = existing.join(', ');
       loadMapData(true);
     };
     list.appendChild(item);
