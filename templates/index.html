@@ -92,7 +92,7 @@
     <section id="page-query" class="page">
       <h2>🚌 台南公車即時時刻查詢</h2>
 
-      <!-- 手機版主頁圖示（電腦版不會顯示，一律用左側常駐選單） -->
+      <!-- 主頁圖示（電腦版、手機版都會顯示） -->
       <div id="mobile-home-grid">
         <button class="home-tile home-tile-map" data-action="map">
           <span class="home-tile-icon">🚌</span><span>動態公車</span>
@@ -123,116 +123,130 @@
         </button>
       </div>
 
-      <!-- 詳細查詢內容：手機版預設收合在主頁圖示後面，點圖示才會展開＋捲動過去；電腦版一律顯示 -->
-      <div id="query-detail" class="mobile-collapsed">
+      <!-- 子頁面容器：點主頁圖示後才會出現，一律有返回鍵，不會直接接在主頁下面 -->
+      <div id="subpage-container" class="hidden">
+        <button id="btn-back-home" class="btn btn-block">← 返回主頁</button>
 
-      <div class="query-columns">
-        <!-- 左欄：路線篩選 -->
-        <div class="query-left">
-          <h3 id="filter-anchor">🔍 路線篩選</h3>
-          <p class="caption">點選顏色或數字篩選：</p>
+        <!-- 子頁：路線篩選／附近站牌／小黃公車 共用同一套查詢結果 -->
+        <div id="subpage-route" class="subpage hidden">
 
-          <div class="filter-grid">
-            <button class="filter-btn" data-f="綠">綠</button>
-            <button class="filter-btn" data-f="橘">橘</button>
-            <button class="filter-btn" data-f="1">1</button>
-            <button class="filter-btn" data-f="2">2</button>
-
-            <button class="filter-btn" data-f="棕">棕</button>
-            <button class="filter-btn" data-f="藍">藍</button>
-            <button class="filter-btn" data-f="3">3</button>
-            <button class="filter-btn" data-f="4">4</button>
-
-            <button class="filter-btn" data-f="紅">紅</button>
-            <button class="filter-btn" data-f="黃">黃</button>
-            <button class="filter-btn" data-f="5">5</button>
-            <button class="filter-btn" data-f="6">6</button>
-
-            <button class="filter-btn" data-f="市區">市區</button>
-            <button class="filter-btn" data-f="高鐵">高鐵</button>
-            <button class="filter-btn" data-f="7">7</button>
-            <button class="filter-btn" data-f="8">8</button>
-
-            <button class="filter-btn" data-f="觀光">觀光</button>
-            <button class="filter-btn" data-f="9">9</button>
-            <button class="filter-btn" data-f="0">0</button>
+          <!-- 小黃公車專用路線選單：只有從「小黃公車」圖示進來才會顯示，選了之後跟一般公車查詢流程完全一樣 -->
+          <div id="yellow-bus-picker" class="hidden">
+            <h3 id="yellow-bus-anchor">🚕 小黃公車查詢</h3>
+            <p class="caption">小黃公車是用計程車營運的固定路線公車，查詢方式跟一般公車完全一樣。</p>
+            <label>選擇小黃公車路線</label>
+            <select id="yellow-bus-select"><option value="">請選擇路線...</option></select>
+            <div id="yellow-bus-status" class="caption"></div>
+            <hr>
           </div>
-          <button id="btn-clear-filter" class="btn btn-block">❌ 清除篩選</button>
-          <div id="filter-status" class="info-box">顯示：全部路線</div>
 
-          <label>選擇路線</label>
-          <select id="route-select"><option value="">請選擇或輸入路線...</option></select>
+          <div class="query-columns">
+            <!-- 左欄：路線篩選 -->
+            <div class="query-left">
+              <h3 id="filter-anchor">🔍 路線篩選</h3>
+              <p class="caption">點選顏色或數字篩選：</p>
 
-          <button id="btn-fav-toggle" class="btn btn-block hidden">☆ 加入最愛</button>
+              <div class="filter-grid">
+                <button class="filter-btn" data-f="綠">綠</button>
+                <button class="filter-btn" data-f="橘">橘</button>
+                <button class="filter-btn" data-f="1">1</button>
+                <button class="filter-btn" data-f="2">2</button>
 
-          <div id="stop-select-body" class="hidden">
-            <label>等候站</label>
-            <select id="start-select"></select>
-            <label>目的地</label>
-            <select id="end-select"></select>
-          </div>
-          <div id="route-hint" class="info-box">請選擇路線</div>
+                <button class="filter-btn" data-f="棕">棕</button>
+                <button class="filter-btn" data-f="藍">藍</button>
+                <button class="filter-btn" data-f="3">3</button>
+                <button class="filter-btn" data-f="4">4</button>
 
-          <hr>
+                <button class="filter-btn" data-f="紅">紅</button>
+                <button class="filter-btn" data-f="黃">黃</button>
+                <button class="filter-btn" data-f="5">5</button>
+                <button class="filter-btn" data-f="6">6</button>
 
-          <h3 id="nearby-anchor">📍 附近公車站</h3>
-          <button id="btn-gps" class="btn btn-block">📡 自動取得座標</button>
-          <div class="gps-coords">
-            緯度：<input id="lat-disp" readonly placeholder="點上方取得">
-          </div>
-          <div class="gps-coords">
-            經度：<input id="lon-disp" readonly placeholder="點上方取得">
-          </div>
-          <label>緯度</label>
-          <input type="text" id="gps-lat-in" placeholder="例：22.9997">
-          <label>經度</label>
-          <input type="text" id="gps-lon-in" placeholder="例：120.2270">
-          <button id="btn-search-nearby" class="btn btn-block">🔍 搜尋附近站牌</button>
-          <div id="nearby-result"></div>
-        </div>
+                <button class="filter-btn" data-f="市區">市區</button>
+                <button class="filter-btn" data-f="高鐵">高鐵</button>
+                <button class="filter-btn" data-f="7">7</button>
+                <button class="filter-btn" data-f="8">8</button>
 
-        <!-- 右欄：即時動態 -->
-        <div class="query-right">
-          <div id="weather-box" class="info-box hidden"></div>
+                <button class="filter-btn" data-f="觀光">觀光</button>
+                <div class="filter-spacer"></div>
+                <button class="filter-btn" data-f="0">0</button>
+                <button class="filter-btn" data-f="9">9</button>
+              </div>
+              <button id="btn-clear-filter" class="btn btn-block">❌ 清除篩選</button>
+              <div id="filter-status" class="info-box">顯示：全部路線</div>
+              <div id="filter-route-chips"></div>
 
-          <div id="status-box" class="hidden">
-            <h3 id="status-title"></h3>
-            <div class="dir-buttons">
-              <button id="btn-dir0" class="btn dir-btn">➡️ 往</button>
-              <button id="btn-dir1" class="btn dir-btn">⬅️ 往</button>
-              <button id="btn-refresh-status" class="btn">🔄 重新整理</button>
+              <label>選擇路線</label>
+              <select id="route-select"><option value="">請選擇或輸入路線...</option></select>
+
+              <button id="btn-fav-toggle" class="btn btn-block hidden">☆ 加入最愛</button>
+
+              <div id="stop-select-body" class="hidden">
+                <label>等候站</label>
+                <select id="start-select"></select>
+                <label>目的地</label>
+                <select id="end-select"></select>
+              </div>
+              <div id="route-hint" class="info-box">請選擇路線</div>
+
+              <button id="btn-show-timetable" class="btn btn-block hidden">📅 查看固定時刻表</button>
+              <div id="timetable-box" class="hidden"></div>
+
+              <hr>
+
+              <h3 id="nearby-anchor">📍 附近公車站</h3>
+              <button id="btn-gps" class="btn btn-block">📡 自動取得座標</button>
+              <div class="gps-coords">
+                緯度：<input id="lat-disp" readonly placeholder="點上方取得">
+              </div>
+              <div class="gps-coords">
+                經度：<input id="lon-disp" readonly placeholder="點上方取得">
+              </div>
+              <label>緯度</label>
+              <input type="text" id="gps-lat-in" placeholder="例：22.9997">
+              <label>經度</label>
+              <input type="text" id="gps-lon-in" placeholder="例：120.2270">
+              <button id="btn-search-nearby" class="btn btn-block">🔍 搜尋附近站牌</button>
+              <div id="nearby-result"></div>
             </div>
-            <div id="ubike-suggestion" class="success-box hidden"></div>
-            <div id="timeline-container" class="timeline-container"></div>
-            <div class="tts-buttons">
-              <button id="btn-tts-speak" class="btn tts-btn">🔊 朗讀公車資訊</button>
-              <button id="btn-tts-stop" class="btn tts-btn-stop">⏹ 停止</button>
+
+            <!-- 右欄：即時動態 -->
+            <div class="query-right">
+              <div id="weather-box" class="info-box hidden"></div>
+
+              <div id="status-box" class="hidden">
+                <h3 id="status-title"></h3>
+                <div class="dir-buttons">
+                  <button id="btn-dir0" class="btn dir-btn">➡️ 往</button>
+                  <button id="btn-dir1" class="btn dir-btn">⬅️ 往</button>
+                  <button id="btn-refresh-status" class="btn">🔄 重新整理</button>
+                </div>
+                <div id="ubike-suggestion" class="success-box hidden"></div>
+                <div id="timeline-container" class="timeline-container"></div>
+                <div class="tts-buttons">
+                  <button id="btn-tts-speak" class="btn tts-btn">🔊 朗讀公車資訊</button>
+                  <button id="btn-tts-stop" class="btn tts-btn-stop">⏹ 停止</button>
+                </div>
+              </div>
+              <div id="status-empty" class="info-box">👈 請從左側選擇路線開始查詢</div>
             </div>
           </div>
-          <div id="status-empty" class="info-box">👈 請從左側選擇路線開始查詢</div>
         </div>
-      </div>
 
-      <!-- 小黃公車查詢（功能開發中：等資料來源確認後補上真正的查詢邏輯） -->
-      <div id="yellow-bus-section">
-        <hr>
-        <h3 id="yellow-bus-anchor">🚕 小黃公車查詢</h3>
-        <div class="info-box">此功能開發中，用法將會跟一般公車查詢一致（選路線 → 選等候站/目的地 → 看即時動態）。</div>
-      </div>
-
-      <!-- AI 助理：置於頁面最底部，跨欄滿版 -->
-      <div class="query-ai-section">
-        <hr>
-        <h3 id="chat-anchor">🤖 AI 助理</h3>
-        <div class="caption">目前對話：<b id="chat-current-title"></b></div>
-        <div id="chat-messages"></div>
-        <div class="chat-input-row">
-          <input type="text" id="chat-input" placeholder="有什麼我可以幫忙的嗎？">
-          <button id="btn-chat-send" class="btn">送出</button>
+        <!-- 子頁：AI 助理 -->
+        <div id="subpage-chat" class="subpage hidden">
+          <div class="query-ai-section">
+            <h3 id="chat-anchor">🤖 AI 助理</h3>
+            <div class="caption">目前對話：<b id="chat-current-title"></b></div>
+            <div id="chat-messages"></div>
+            <div class="chat-input-row">
+              <input type="text" id="chat-input" placeholder="有什麼我可以幫忙的嗎？">
+              <button id="btn-chat-send" class="btn">送出</button>
+            </div>
+          </div>
         </div>
-      </div>
 
-      </div><!-- /#query-detail -->
+      </div><!-- /#subpage-container -->
     </section>
 
     <!-- ─────────── 地圖頁面 ─────────── -->
