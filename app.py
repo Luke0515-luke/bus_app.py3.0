@@ -339,18 +339,20 @@ for _rl in ROUTE_CATEGORIES.values():
             ALL_ROUTE_NAMES.append(_r)
 
 def get_saved_route_names():
-    """掃描 /opt/render/project/data/route，回傳所有『真的有存檔資料』的路線名稱
-    （不管是不是在系統設定的 ROUTE_CATEGORIES 裡）。"""
-    saved = set()
+    """掃描 /opt/render/project/data/route，回傳『站牌（StopOfRoute）與軌跡（Shape）
+    兩份資料都真的存在』的路線名稱（不管是不是在系統設定的 ROUTE_CATEGORIES 裡）。
+    兩者缺一都不算——只有其中一份存在，代表地圖顯示時另一份還是得即時向 TDX 查，
+    不能顯示 💾 讓人誤以為這條路線已經完整存好、只需要查公車定位就好。"""
+    has_stop, has_shape = set(), set()
     try:
         for fn in os.listdir(ROUTE_DATA_SAVE_DIR):
             if fn.endswith("_route_stop.json"):
-                saved.add(fn[: -len("_route_stop.json")])
+                has_stop.add(fn[: -len("_route_stop.json")])
             elif fn.endswith("_route_shape.json"):
-                saved.add(fn[: -len("_route_shape.json")])
+                has_shape.add(fn[: -len("_route_shape.json")])
     except FileNotFoundError:
         pass
-    return saved
+    return has_stop & has_shape
 
 
 def get_all_known_routes():
