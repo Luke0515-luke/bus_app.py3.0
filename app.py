@@ -66,6 +66,10 @@ def _route_shape_file_path(route_name):
     return os.path.join(ROUTE_DATA_SAVE_DIR, f"{route_name}_route_shape.json")
 
 
+def _route_timetable_file_path(route_name):
+    return os.path.join(ROUTE_DATA_SAVE_DIR, f"{route_name}_route_timetable.json")
+
+
 def _save_route_json(path, data):
     """把某路線的 TDX 原始 JSON 寫進 /opt/render/project/data/route，
     會跟著現有的排程一起被備份到 GitHub，不會因為 Render 重啟而消失。"""
@@ -130,6 +134,24 @@ def _fetch_and_save_shape_data(route_name):
     return data
 
 
+def _fetch_and_save_timetable_data(route_name):
+    """即時向 TDX 查詢某路線的固定時刻表（Bus/Schedule）原始資料，驗證路線名稱後才存檔。
+    跟站牌／軌跡走同一套「查一次、之後都吃檔案」的邏輯，避免每次打開時刻表都要
+    重新等 TDX 回應（TDX 這支端點常常比較慢，手機在訊號不穩時容易直接 fetch 失敗）。"""
+    url = f"https://tdx.transportdata.tw/api/basic/v2/Bus/Schedule/City/Tainan/{route_name}?%24format=JSON"
+    res = tdx_get(url, timeout=15, retries=1)
+    if res is None:
+        return None
+    try:
+        data = res.json()
+    except Exception:
+        return None
+    data = _filter_route_entries(data, route_name)
+    if data:
+        _save_route_json(_route_timetable_file_path(route_name), data)
+    return data
+
+
 def load_route_stop_data(route_name):
     """優先讀取已存檔的 StopOfRoute 資料（會被自動備份到 GitHub）；
     檔案不存在、損毀，或內容其實是其他路線的資料（舊版沒有驗證時可能存錯），
@@ -165,12 +187,30 @@ def load_route_shape_data(route_name):
     return _fetch_and_save_shape_data(route_name) or []
 
 
+def load_route_timetable_data(route_name):
+    """優先讀取已存檔的固定時刻表資料（會被自動備份到 GitHub）；
+    檔案不存在、損毀，或內容其實是其他路線的資料，都會重新向 TDX 查一次並覆蓋舊檔。"""
+    path = _route_timetable_file_path(route_name)
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        valid = _filter_route_entries(data, route_name)
+        if valid:
+            return valid
+        if data:
+            print(f"⚠️「{route_name}」的時刻表存檔與路線名稱不符（疑似存到其他路線），將重新查詢並覆蓋。")
+    except (FileNotFoundError, json.JSONDecodeError):
+        pass
+    return _fetch_and_save_timetable_data(route_name) or []
+
+
 def _cleanup_known_bad_route_files():
-    """開機時清掉已知的壞檔：路線名稱字面上是「0」的存檔（0_route_stop.json / 0_route_shape.json）。
-    系統裡從來沒有一條路線正式名稱就叫「0」（實際上是「0左」「0右」），
+    """開機時清掉已知的壞檔：路線名稱字面上是「0」的存檔（0_route_stop.json / 0_route_shape.json /
+    0_route_timetable.json）。系統裡從來沒有一條路線正式名稱就叫「0」（實際上是「0左」「0右」），
     這個檔案如果存在，幾乎可以確定是之前查詢時把其他路線的資料混進來、存錯的殘留檔案。"""
     for bad_name in ("0",):
-        for path in (_route_stop_file_path(bad_name), _route_shape_file_path(bad_name)):
+        for path in (_route_stop_file_path(bad_name), _route_shape_file_path(bad_name),
+                     _route_timetable_file_path(bad_name)):
             try:
                 if os.path.exists(path):
                     os.remove(path)
@@ -182,7 +222,7 @@ def _cleanup_known_bad_route_files():
 def _invalidate_route_cache(route_name):
     """清掉某條路線在記憶體暫存（in-memory cache）裡的舊資料，
     讓下一次查詢立即讀到剛存好的檔案。"""
-    for fn in ("fetch_route_stops", "fetch_route_shape", "fetch_route_stop_positions"):
+    for fn in ("fetch_route_stops", "fetch_route_shape", "fetch_route_stop_positions", "fetch_route_schedule"):
         _cache_store.pop(f"{fn}:({route_name!r},):{{}}", None)
     _cache_store.pop("build_stop_route_index:():{}", None)
 
@@ -803,30 +843,48 @@ def api_route_categories():
 
 @app.route('/api/filter_routes')
 def api_filter_routes():
-    cf = request.args.get('filter', '').strip()
+    """依照顏色／數字／分類篩選路線。支援一次選取多個篩選條件（用逗號分隔），
+    只要符合任一個條件的路線都會列出（OR 邏輯），不是原本只能單選一種顏色/數字。"""
+    raw_param = request.args.get('filter', '').strip()
+    cf_list = [c.strip() for c in raw_param.replace('，', ',').split(',') if c.strip()]
+
     all_routes = []
     for rl in ROUTE_CATEGORIES.values():
         all_routes.extend(rl)
     seen_s = set()
     all_routes = [x for x in all_routes if not (x in seen_s or seen_s.add(x))]
 
-    if not cf:
-        filtered = all_routes
-    elif cf == "市區":
-        filtered = ROUTE_CATEGORIES["市區"]
-    elif cf == "高鐵":
-        filtered = ROUTE_CATEGORIES["高鐵快捷"]
-    elif cf == "觀光":
-        filtered = ROUTE_CATEGORIES["觀光"]
-    else:
+    def match_one(cf):
+        if cf == "市區":
+            return ROUTE_CATEGORIES["市區"]
+        if cf == "高鐵":
+            return ROUTE_CATEGORIES["高鐵快捷"]
+        if cf == "觀光":
+            return ROUTE_CATEGORIES["觀光"]
         raw = [r for r in all_routes if cf in r]
         if cf.isdigit():
             def nsort(rs):
                 nums = ''.join(c for c in rs if c.isdigit())
                 return (0 if rs.startswith(cf) else 1, int(nums) if nums else 999, rs)
-            filtered = sorted(raw, key=nsort)
-        else:
-            filtered = raw
+            return sorted(raw, key=nsort)
+        return raw
+
+    if not cf_list:
+        filtered = all_routes
+    else:
+        # 多個篩選條件取聯集（符合任一個就列出），並保留 all_routes 原本的排序
+        matched_set = set()
+        for cf in cf_list:
+            matched_set.update(match_one(cf))
+        filtered = [r for r in all_routes if r in matched_set]
+        # 「市區」「高鐵」「觀光」這幾類本身不在 all_routes 排序裡的路線，另外補上
+        extra = [r for cf in cf_list for r in match_one(cf) if r not in filtered]
+        seen_extra = set(filtered)
+        for r in extra:
+            if r not in seen_extra:
+                filtered.append(r)
+                seen_extra.add(r)
+
     return jsonify({"routes": filtered})
 
 
@@ -1242,15 +1300,11 @@ def api_yellow_bus_routes():
 def fetch_route_schedule(route_name):
     """取得某路線的固定時刻表（TDX Bus/Schedule）。
     小黃公車、支線公車大多是固定班次時刻，跟幹線那種『依班距發車』不一樣，
-    所以另外用這支端點取時刻表，而不是即時動態。"""
-    url = f"https://tdx.transportdata.tw/api/basic/v2/Bus/Schedule/City/Tainan/{route_name}?%24format=JSON"
-    try:
-        res = requests.get(url, headers=tdx_headers(), timeout=15)
-        if res.status_code == 200:
-            return res.json()
-    except Exception:
-        pass
-    return []
+    所以另外用這支端點取時刻表，而不是即時動態。
+    跟站牌／軌跡資料一樣，優先讀取 /opt/render/project/data/route 底下已存檔的資料
+    （會自動被排程備份到 GitHub），沒有的話才即時查 TDX 並自動存檔，之後同一路線
+    就不用每次打開時刻表都重新等 TDX 回應。"""
+    return load_route_timetable_data(route_name)
 
 
 @app.route('/api/timetable')
