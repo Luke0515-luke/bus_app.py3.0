@@ -51,9 +51,45 @@ html, body { height: 100%; background: #f5f6fa; color: #222; }
 .query-left { width: 320px; min-width: 280px; }
 .query-right { flex: 1; min-width: 0; }
 
-/* 手機版主頁圖示：電腦版一律隱藏（電腦版用左側常駐選單），詳細查詢內容電腦版一律顯示 */
-#mobile-home-grid { display: none; }
-#query-detail.mobile-collapsed { display: block; }
+/* 主頁圖示格：電腦版、手機版都顯示，點了才會切到子頁面（帶返回鍵），不會直接接在主頁下面 */
+#mobile-home-grid {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px;
+  max-width: 620px; margin: 10px 0 26px;
+}
+.home-tile {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 6px; aspect-ratio: 1 / 1; border: none; border-radius: 14px;
+  color: #fff; font-size: 13px; font-weight: bold; cursor: pointer;
+  box-shadow: 0 3px 8px rgba(0,0,0,.18); transition: transform .1s;
+}
+.home-tile:hover { filter: brightness(1.06); }
+.home-tile:active { transform: scale(.96); }
+.home-tile-icon { font-size: 28px; }
+.home-tile-map       { background: linear-gradient(135deg,#6fcf6f,#2e8b57); }
+.home-tile-filter    { background: linear-gradient(135deg,#6fa8e8,#2980B9); }
+.home-tile-nearby    { background: linear-gradient(135deg,#c9a27a,#8B4513); }
+.home-tile-chat      { background: linear-gradient(135deg,#b39ddb,#6c5ce7); }
+.home-tile-fav       { background: linear-gradient(135deg,#f2c94c,#E67E22); }
+.home-tile-yellow    { background: linear-gradient(135deg,#ffd54f,#f1a208); }
+.home-tile-intercity { background: linear-gradient(135deg,#ef8686,#E74C3C); }
+.home-tile-adv       { background: linear-gradient(135deg,#4dd0c4,#16a085); }
+.home-tile-more      { background: linear-gradient(135deg,#8fa3b3,#34495e); }
+
+#subpage-container { max-width: 1100px; }
+#btn-back-home { max-width: 220px; margin-bottom: 16px; }
+
+/* 小黃公車路線選單（只在從小黃公車圖示進來時顯示） */
+#yellow-bus-picker { background: #fff8e6; border: 1px solid #f1c40f66; border-radius: 8px; padding: 12px 14px; margin-bottom: 16px; }
+#yellow-bus-picker select { width: 100%; padding: 7px 10px; border-radius: 6px; border: 1px solid #ccd3e6; font-size: 13px; margin: 6px 0; }
+
+/* 固定時刻表 */
+#timetable-box { background: #f7f9ff; border: 1px solid #dde3f7; border-radius: 8px; padding: 10px 12px; margin: 8px 0; }
+.timetable-direction { margin-bottom: 12px; }
+.timetable-dir-title { font-weight: bold; color: #2b3a67; margin-bottom: 4px; font-size: 13px; }
+.timetable-group { margin-bottom: 6px; }
+.timetable-days { font-size: 11px; color: #777; margin-bottom: 3px; }
+.timetable-times { display: flex; flex-wrap: wrap; gap: 5px; }
+.timetable-time { background: #e6ecff; color: #2b3a67; border-radius: 5px; padding: 2px 7px; font-size: 12px; font-variant-numeric: tabular-nums; }
 
 .info-box { background: #eef2ff; color: #2b3a67; padding: 8px 12px; border-radius: 6px; font-size: 13px; margin: 8px 0; }
 .success-box { background: #e6f9ee; color: #1a7a44; padding: 10px 14px; border-radius: 6px; font-size: 13px; margin: 8px 0; white-space: pre-line; }
@@ -64,6 +100,13 @@ html, body { height: 100%; background: #f5f6fa; color: #222; }
   width: 100%; padding: 7px 10px; border-radius: 6px; border: 1px solid #ccd3e6; font-size: 13px; margin-bottom: 8px;
 }
 .query-left label { display: block; font-size: 13px; color: #444; margin: 8px 0 3px; font-weight: bold; }
+
+#filter-route-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px; }
+.route-chip {
+  border: none; border-radius: 14px; padding: 5px 12px; font-size: 12px; font-weight: bold;
+  color: #fff; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,.2);
+}
+.route-chip:active { filter: brightness(.9); }
 
 .filter-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 8px 0; }
 .filter-btn {
@@ -88,6 +131,7 @@ html, body { height: 100%; background: #f5f6fa; color: #222; }
 .filter-btn:not([data-f="綠"]):not([data-f="橘"]):not([data-f="棕"]):not([data-f="藍"]):not([data-f="紅"]):not([data-f="黃"]):not([data-f="市區"]):not([data-f="高鐵"]):not([data-f="觀光"]).active {
   background: #4A90E2; color: #fff; border-color: #4A90E2;
 }
+.filter-spacer { visibility: hidden; pointer-events: none; }
 
 .gps-coords { font-size: 12px; margin-bottom: 4px; }
 .gps-coords input { width: 130px; padding: 3px 6px; border: 1px solid #ccc; border-radius: 4px; margin-left: 4px; }
@@ -246,31 +290,11 @@ body.font-large .ev-tag, body.font-large .ubike-tag { font-size: 14px !important
 
   #main-content { height: auto; padding: 16px; padding-top: 64px; }
 
-  /* 手機版主頁：像大台南公車 App 一樣的彩色圖示格子 */
+  /* 手機版主頁圖示：跟電腦版同一套 .home-tile 樣式，這裡只調整欄數／間距 */
   #mobile-home-grid {
-    display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;
+    grid-template-columns: repeat(3, 1fr); gap: 10px; max-width: none;
     margin: 14px 0 22px;
   }
-  .home-tile {
-    display: flex; flex-direction: column; align-items: center; justify-content: center;
-    gap: 6px; aspect-ratio: 1 / 1; border: none; border-radius: 14px;
-    color: #fff; font-size: 13px; font-weight: bold; cursor: pointer;
-    box-shadow: 0 3px 8px rgba(0,0,0,.18); transition: transform .1s;
-  }
-  .home-tile:active { transform: scale(.96); }
-  .home-tile-icon { font-size: 28px; }
-  .home-tile-map       { background: linear-gradient(135deg,#6fcf6f,#2e8b57); }
-  .home-tile-filter    { background: linear-gradient(135deg,#6fa8e8,#2980B9); }
-  .home-tile-nearby    { background: linear-gradient(135deg,#c9a27a,#8B4513); }
-  .home-tile-chat      { background: linear-gradient(135deg,#b39ddb,#6c5ce7); }
-  .home-tile-fav       { background: linear-gradient(135deg,#f2c94c,#E67E22); }
-  .home-tile-yellow    { background: linear-gradient(135deg,#ffd54f,#f1a208); }
-  .home-tile-intercity { background: linear-gradient(135deg,#ef8686,#E74C3C); }
-  .home-tile-adv       { background: linear-gradient(135deg,#4dd0c4,#16a085); }
-  .home-tile-more      { background: linear-gradient(135deg,#8fa3b3,#34495e); }
-
-  /* 詳細查詢內容：手機版預設收合，點主頁圖示後才展開（用 JS 移除 .mobile-collapsed） */
-  #query-detail.mobile-collapsed { display: none; }
 
   /* 查詢頁：左右兩欄改為上下堆疊 */
   .query-columns { flex-direction: column; gap: 18px; }
