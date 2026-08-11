@@ -434,7 +434,9 @@ async function loadRouteStatus() {
   el('weather-box').classList.remove('hidden');
 
   state.destNames = { 去程: data.dest0, 回程: data.dest1 };
-  el('status-title').textContent = `🚌 ${state.routeChoice} 全線即時動態`;
+  const busCountText = typeof data.active_bus_count === 'number'
+    ? `（GPS 定位目前共 ${data.active_bus_count} 台營運中）` : '';
+  el('status-title').textContent = `🚌 ${state.routeChoice} 全線即時動態${busCountText}`;
   el('btn-dir0').textContent = `➡️ 往 ${data.dest0}`;
   el('btn-dir1').textContent = `⬅️ 往 ${data.dest1}`;
   el('btn-dir0').classList.toggle('active', state.dirToggle === '去程');
