@@ -47,13 +47,14 @@
     <!-- 進階查詢 -->
     <details class="expander" id="details-advsearch">
       <summary>🔍 進階查詢（站到站）</summary>
-      <p class="caption">輸入起站與終點，找出直達或轉乘一次的路線（可直接打字搜尋站名）</p>
+      <p class="caption">輸入起站與終點，找出直達或轉乘一次的路線</p>
       <div id="adv-search-body">
+        <label>🔎 快速篩選站名（可不填，直接在下面選單找也可以）</label>
+        <input type="text" id="adv-stop-search" placeholder="輸入關鍵字篩選下面的站名選單...">
         <label>出發站</label>
-        <input type="text" id="adv-start" list="adv-stops-datalist" placeholder="輸入或選擇站名...">
+        <select id="adv-start"><option value="">請選擇或輸入站名...</option></select>
         <label>目的站</label>
-        <input type="text" id="adv-end" list="adv-stops-datalist" placeholder="輸入或選擇站名...">
-        <datalist id="adv-stops-datalist"></datalist>
+        <select id="adv-end"><option value="">請選擇或輸入站名...</option></select>
         <button id="btn-adv-search" class="btn btn-block">🔎 查詢路線</button>
         <div id="adv-search-result"></div>
       </div>
