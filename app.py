@@ -387,6 +387,41 @@ def cached(ttl_seconds):
     return decorator
 
 
+@cached(86400)
+def fetch_intercity_operators_from_tdx():
+    """直接向 TDX 查詢公路客運（跨縣市）的業者清單，取得真正對應的 OperatorID。
+    原本 INTERCITY_OPERATORS 是手動抄錄的固定代碼，一旦代碼跟 TDX 實際的對不上，
+    不管選哪個業者查詢都會是空的（『一直顯示沒有業者資料』）。改成直接向 TDX 要
+    最新、正確的業者清單，才不會一直卡在猜代碼猜錯的問題。"""
+    url = "https://tdx.transportdata.tw/api/basic/v2/Bus/Operator/InterCity?%24format=JSON"
+    try:
+        res = requests.get(url, headers=tdx_headers(), timeout=10)
+        if res.status_code == 200:
+            data = res.json()
+            result = {}
+            for op in data:
+                name = op.get("OperatorName", {}).get("Zh_tw", "")
+                opid = op.get("OperatorID", "")
+                if name and opid:
+                    result[name] = opid
+            if result:
+                return result
+    except Exception:
+        pass
+    return {}
+
+
+def get_intercity_operators():
+    """業者清單：優先用即時向 TDX 查回來、保證正確的清單；
+    如果 TDX 這支端點一時查不到，才退回手動維護的固定清單當備援，不會整個掛掉。"""
+    dynamic = fetch_intercity_operators_from_tdx()
+    if dynamic:
+        merged = {"（請選擇）": None}
+        merged.update(dict(sorted(dynamic.items(), key=lambda kv: kv[0])))
+        return merged
+    return INTERCITY_OPERATORS
+
+
 # ── in-memory 使用者 session store（等同於 st.session_state）──
 SESSION_STORE = {}
 
@@ -825,7 +860,7 @@ def index():
     get_uid()
     return render_template('index.html',
                             route_categories=ROUTE_CATEGORIES,
-                            intercity_operators=INTERCITY_OPERATORS)
+                            intercity_operators=get_intercity_operators())
 
 
 # ══════════════════════════════════════════════════════════
@@ -1144,7 +1179,7 @@ def fetch_intercity_stops(route_id):
 
 @app.route('/api/intercity/operators')
 def api_intercity_operators():
-    return jsonify({"operators": INTERCITY_OPERATORS})
+    return jsonify({"operators": get_intercity_operators()})
 
 
 @app.route('/api/intercity/routes')
