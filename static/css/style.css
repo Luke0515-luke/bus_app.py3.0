@@ -217,7 +217,8 @@ body.font-large .ev-tag, body.font-large .ubike-tag { font-size: 14px !important
 #page-map { padding: 0; margin: -24px -28px; }
 #map-app { display: flex; height: 100vh; overflow: hidden; background: #1a1a2e; }
 #map-panel { width: 240px; min-width: 240px; background: #16213e; color: #eee; display: flex; flex-direction: column; overflow: hidden; border-right: 1px solid #0f3460; }
-#map-panel-header { padding: 12px; background: #0f3460; font-weight: bold; font-size: 14px; color: #fff; flex-shrink: 0; }
+#map-panel-header { padding: 12px; background: #0f3460; font-weight: bold; font-size: 14px; color: #fff; flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+#btn-toggle-map-panel { display: none; }
 /* 面板內容整個當成同一個可捲動區塊（只有最上面的標題列固定），
    不論是路線清單、公車定位清單、或存檔狀態訊息變多長，都滑得到，不會被裁掉。 */
 #map-panel-body { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; }
@@ -318,9 +319,19 @@ body.font-large .ev-tag, body.font-large .ubike-tag { font-size: 14px !important
   /* 地圖頁：側欄改到上方，地圖佔剩餘高度 */
   #page-map { margin: -64px -16px -16px -16px; }
   #map-app { flex-direction: column; height: 100vh; }
-  #map-panel { width: 100%; min-width: 0; max-height: 40vh; border-right: none; border-bottom: 1px solid #0f3460; }
+  #map-panel { width: 100%; min-width: 0; border-right: none; border-bottom: 1px solid #0f3460; }
   #map-panel-header { padding-top: 54px; }
   #leaflet-map { flex: 1; min-height: 45vh; }
+
+  /* 路線清單／查詢欄等內容預設收合，不直接佔掉一大塊版面，
+     按標頭的「☰ 更多設定」才會展開，地圖優先顯示 */
+  #btn-toggle-map-panel {
+    display: inline-block; flex-shrink: 0; padding: 6px 10px; font-size: 12px;
+    border-radius: 6px; border: 1px solid rgba(255,255,255,.35); background: transparent;
+    color: #fff; cursor: pointer;
+  }
+  #map-panel-body { display: none; max-height: 45vh; }
+  #map-panel.expanded #map-panel-body { display: block; }
 
   /* 時間軸在小螢幕上縮小左側留白，避免內容被推太右邊 */
   .timeline-container { padding-left: 26px; margin-left: 8px; }
