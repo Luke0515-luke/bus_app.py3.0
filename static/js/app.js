@@ -148,6 +148,12 @@ function bindStaticEvents() {
 
   el('btn-map-refresh').addEventListener('click', () => loadMapData(true));
   el('map-route-input').addEventListener('keydown', e => { if (e.key === 'Enter') loadMapData(true); });
+  el('btn-toggle-map-panel').addEventListener('click', () => {
+    const panel = el('map-panel');
+    const btn = el('btn-toggle-map-panel');
+    const expanded = panel.classList.toggle('expanded');
+    btn.textContent = expanded ? '✕ 收合設定' : '☰ 更多設定';
+  });
   el('btn-toggle-bus-list').addEventListener('click', () => {
     state.busListOpen = !state.busListOpen;
     renderMapBusList();
@@ -554,10 +560,7 @@ async function selectRouteByName(route) {
 // ── 進階查詢（站到站） ────────────────────────────────────
 async function loadAdvancedStops() {
   const data = await api('/api/advanced_search/stops');
-  const opts = '<option value="">請選擇或輸入站名...</option>' +
-    data.stops.map(s => `<option value="${esc(s)}">${esc(s)}</option>`).join('');
-  el('adv-start').innerHTML = opts;
-  el('adv-end').innerHTML = opts;
+  el('adv-stops-datalist').innerHTML = data.stops.map(s => `<option value="${esc(s)}"></option>`).join('');
 }
 async function advancedSearch() {
   const start = el('adv-start').value;
@@ -607,6 +610,17 @@ async function onIntercityOperatorChange() {
     return;
   }
   result.innerHTML = `<div class="info-box">共有 ${data.total} 條路線，請輸入起點或目的站篩選</div>`;
+
+  // 把這個業者所有路線的起訖站名整理成清單，餵給 input 的 datalist，
+  // 這樣 ic-dep / ic-dest 輸入框打字時就會跳出實際存在的站名選單可以直接點選。
+  const depNames = new Set();
+  const destNames = new Set();
+  icRoutesCache.forEach(r => {
+    if (r.dep) depNames.add(r.dep);
+    if (r.dest) destNames.add(r.dest);
+  });
+  el('ic-dep-datalist').innerHTML = [...depNames].sort().map(s => `<option value="${esc(s)}"></option>`).join('');
+  el('ic-dest-datalist').innerHTML = [...destNames].sort().map(s => `<option value="${esc(s)}"></option>`).join('');
 }
 function renderIntercityMatches() {
   const dep = el('ic-dep').value.trim();
@@ -1006,7 +1020,7 @@ function renderMapPanel(filterText) {
     const item = document.createElement('div');
     item.className = 'route-item' + (state.mapActiveRoutes.has(route) ? ' active' : '');
     item.title = isSaved ? '已儲存路線原始資料（Shape＋StopOfRoute）' : '';
-    item.innerHTML = `<div class="route-dot" style="background:${color};"></div><span>${isSaved ? '💾 ' : ''}${esc(route)}</span><span class="route-count">${n}</span>`;
+    item.innerHTML = `<div class="route-dot" style="background:${color};"></div><span>${esc(route)}</span><span class="route-count">${n}</span>`;
     item.onclick = () => {
       if (state.mapActiveRoutes.has(route)) state.mapActiveRoutes.delete(route);
       else state.mapActiveRoutes.add(route);
@@ -1023,8 +1037,8 @@ function renderMapPanel(filterText) {
     const color = getRouteColor(route);
     const item = document.createElement('div');
     item.className = 'route-item';
-    item.title = '已儲存路線原始資料（Shape＋StopOfRoute）－目前不在篩選範圍內，點一下即可查詢';
-    item.innerHTML = `<div class="route-dot" style="background:${color};"></div><span>💾 ${esc(route)}</span><span class="route-count">－</span>`;
+    item.title = '已儲存路線原始資料（Shape＋StopOfRoute）－目前不在篩選範圍內，點一下即可加入';
+    item.innerHTML = `<div class="route-dot" style="background:${color};"></div><span>${esc(route)}</span><span class="route-count">－</span>`;
     item.onclick = () => {
       // 用「加入」而不是「取代」：把這條路線併進目前查詢欄的清單，
       // 這樣才能一次累加選取多條路線一起顯示，不會每點一條就把前面選的路線洗掉。
