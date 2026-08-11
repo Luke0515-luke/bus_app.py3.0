@@ -61,7 +61,18 @@ function esc(s) {
 }
 
 // ── 初始化 ────────────────────────────────────────────────
+function applyResponsiveLayout() {
+  // 有些瀏覽器環境（例如「要求電腦版網站」、特殊 WebView）算出來的版面寬度
+  // 可能跟純 CSS media query 判斷的不一致，這裡額外用 JS 實際量測的寬度
+  // 補一層保險，強制套用手機版排版，避免側欄／地圖清單直接整片顯示佔滿版面。
+  document.body.classList.toggle('js-mobile', window.innerWidth <= 1024);
+}
+applyResponsiveLayout();
+window.addEventListener('resize', applyResponsiveLayout);
+
 document.addEventListener('DOMContentLoaded', () => {
+  applyResponsiveLayout();
+  document.body.classList.remove('sidebar-open'); // 確保每次載入頁面側欄都是收合狀態
   bindStaticEvents();
   loadFilterRoutes(null);
   loadFavorites();
@@ -148,6 +159,7 @@ function bindStaticEvents() {
 
   el('btn-map-refresh').addEventListener('click', () => loadMapData(true));
   el('map-route-input').addEventListener('keydown', e => { if (e.key === 'Enter') loadMapData(true); });
+  el('adv-stop-search').addEventListener('input', e => renderAdvStopOptions(e.target.value));
   el('btn-toggle-map-panel').addEventListener('click', () => {
     const panel = el('map-panel');
     const btn = el('btn-toggle-map-panel');
@@ -558,9 +570,23 @@ async function selectRouteByName(route) {
 }
 
 // ── 進階查詢（站到站） ────────────────────────────────────
+let advStopsAll = [];
 async function loadAdvancedStops() {
   const data = await api('/api/advanced_search/stops');
-  el('adv-stops-datalist').innerHTML = data.stops.map(s => `<option value="${esc(s)}"></option>`).join('');
+  advStopsAll = data.stops;
+  renderAdvStopOptions('');
+}
+function renderAdvStopOptions(keyword) {
+  const kw = keyword.trim();
+  const matched = kw ? advStopsAll.filter(s => s.includes(kw)) : advStopsAll;
+  const opts = '<option value="">請選擇或輸入站名...</option>' +
+    matched.map(s => `<option value="${esc(s)}">${esc(s)}</option>`).join('');
+  ['adv-start', 'adv-end'].forEach(id => {
+    const sel = el(id);
+    const prev = sel.value;
+    sel.innerHTML = opts;
+    if (matched.includes(prev)) sel.value = prev;
+  });
 }
 async function advancedSearch() {
   const start = el('adv-start').value;
