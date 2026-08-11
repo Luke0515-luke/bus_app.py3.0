@@ -1,3 +1,18 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&display=swap');
+
+:root {
+  --ink-deep: #0b1220;      /* 最深底色 */
+  --ink-panel: #131f38;     /* 側欄／面板底色 */
+  --ink-elevated: #1b2a4a;  /* 卡片、輸入框底色 */
+  --ink-line: #26385e;      /* 分隔線 */
+  --text-main: #eef1f8;
+  --text-muted: #92a0c4;
+  --signal: #ffb020;        /* 主識別色：號誌琥珀，取自公車到站看板的 LED 燈色 */
+  --signal-dim: #8a5b13;
+  --link-blue: #4f8ff0;
+  --font-display: 'Space Grotesk', 'Noto Sans TC', -apple-system, sans-serif;
+}
+
 * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Noto Sans TC', -apple-system, sans-serif; }
 
 html, body { height: 100%; background: #f5f6fa; color: #222; }
@@ -11,35 +26,45 @@ html, body { height: 100%; background: #f5f6fa; color: #222; }
 /* ── 側邊欄 ─────────────────────────────────────────── */
 #sidebar {
   width: 280px; min-width: 280px;
-  background: #16213e;
+  background: var(--ink-panel);
   color: #eee;
   padding: 18px 14px;
   overflow-y: auto;
   height: 100vh;
   position: sticky;
   top: 0;
+  border-right: 1px solid var(--ink-line);
 }
-.sidebar-title { font-size: 20px; margin-bottom: 14px; color: #fff; }
+/* 站名招牌識別：深底＋琥珀跑馬燈字，呼應公車到站看板的視覺語言 */
+.sidebar-title {
+  font-family: var(--font-display); font-weight: 700;
+  font-size: 19px; margin-bottom: 14px; padding: 10px 12px;
+  color: var(--signal); letter-spacing: .04em;
+  background: var(--ink-deep); border: 1px solid var(--signal-dim); border-radius: 8px;
+  text-shadow: 0 0 10px rgba(255,176,32,.45);
+}
 #sidebar h3 { font-size: 14px; color: #cfd8ff; margin: 10px 0 6px; }
-#sidebar hr { border: none; border-top: 1px solid #2a3a5c; margin: 14px 0; }
-#sidebar label { display: block; font-size: 12px; color: #aab4d4; margin: 8px 0 4px; }
+#sidebar hr { border: none; border-top: 1px solid var(--ink-line); margin: 14px 0; }
+#sidebar label { display: block; font-size: 12px; color: var(--text-muted); margin: 8px 0 4px; }
 #sidebar select, #sidebar input[type="text"] {
-  width: 100%; padding: 6px 8px; border-radius: 6px; border: 1px solid #2a3a5c;
-  background: #1a1a2e; color: #eee; font-size: 13px; margin-bottom: 4px;
+  width: 100%; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--ink-line);
+  background: var(--ink-elevated); color: #eee; font-size: 13px; margin-bottom: 4px;
 }
-.caption { font-size: 12px; color: #9aa4c4; margin: 4px 0; }
-.expander { margin: 10px 0; background: #1a1a2e; border-radius: 8px; padding: 4px 10px; }
+.caption { font-size: 12px; color: var(--text-muted); margin: 4px 0; }
+.expander { margin: 10px 0; background: var(--ink-elevated); border-radius: 8px; padding: 4px 10px; }
 .expander summary { cursor: pointer; padding: 8px 0; font-size: 13px; font-weight: bold; color: #dfe6ff; }
 .expander[open] summary { margin-bottom: 6px; }
 
 /* ── 按鈕 ───────────────────────────────────────────── */
 .btn {
+  font-family: var(--font-display);
   background: #0f3460; color: #fff; border: none; border-radius: 6px;
-  padding: 8px 12px; font-size: 13px; cursor: pointer; transition: background .15s;
+  padding: 8px 12px; font-size: 13px; font-weight: 500; cursor: pointer; transition: background .15s, transform .05s;
 }
 .btn:hover { background: #1a4a80; }
+.btn:active { transform: scale(.98); }
 .btn-block { width: 100%; margin: 4px 0; text-align: center; }
-.btn.active { background: #4A90E2; }
+.btn.active { background: var(--signal); color: #2b1c00; }
 
 /* ── 主內容 ─────────────────────────────────────────── */
 #main-content { flex: 1; padding: 24px 28px; overflow-y: auto; height: 100vh; }
@@ -217,7 +242,12 @@ body.font-large .ev-tag, body.font-large .ubike-tag { font-size: 14px !important
 #page-map { padding: 0; margin: -24px -28px; }
 #map-app { display: flex; height: 100vh; overflow: hidden; background: #1a1a2e; }
 #map-panel { width: 240px; min-width: 240px; background: #16213e; color: #eee; display: flex; flex-direction: column; overflow: hidden; border-right: 1px solid #0f3460; }
-#map-panel-header { padding: 12px; background: #0f3460; font-weight: bold; font-size: 14px; color: #fff; flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+#map-panel-header {
+  padding: 12px; background: var(--ink-deep); font-weight: 700; font-size: 14px;
+  color: var(--signal); flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  font-family: var(--font-display); letter-spacing: .03em; border-bottom: 1px solid var(--signal-dim);
+  text-shadow: 0 0 8px rgba(255,176,32,.4);
+}
 #btn-toggle-map-panel { display: none; }
 /* 面板內容整個當成同一個可捲動區塊（只有最上面的標題列固定），
    不論是路線清單、公車定位清單、或存檔狀態訊息變多長，都滑得到，不會被裁掉。 */
@@ -235,8 +265,8 @@ body.font-large .ev-tag, body.font-large .ubike-tag { font-size: 14px !important
 #map-route-list { padding: 4px 0; }
 .route-item { display: flex; align-items: center; padding: 6px 12px; cursor: pointer; font-size: 13px; border-bottom: 1px solid #0f3460; transition: background 0.15s; }
 .route-item:hover { background: #0f3460; }
-.route-item.active { background: #0f3460; }
-.route-dot { width: 12px; height: 12px; border-radius: 50%; margin-right: 8px; flex-shrink: 0; border: 2px solid rgba(255,255,255,0.3); }
+.route-item.active { background: rgba(255,176,32,.14); box-shadow: inset 3px 0 0 var(--signal); }
+.route-dot { width: 12px; height: 12px; border-radius: 50%; margin-right: 8px; flex-shrink: 0; border: 2px solid rgba(255,255,255,0.3); box-shadow: 0 0 6px rgba(255,255,255,.35); }
 .route-count { margin-left: auto; font-size: 11px; color: #888; background: #0f3460; padding: 1px 5px; border-radius: 8px; }
 #leaflet-map { flex: 1; }
 .bus-popup b { font-size: 15px; color: #333; }
@@ -342,6 +372,35 @@ body.font-large .ev-tag, body.font-large .ubike-tag { font-size: 14px !important
   /* 觸控裝置：加大可點擊區域 */
   .btn, select, input[type="text"] { min-height: 40px; }
 }
+
+/* ── JS 量測寬度的保險規則（不依賴 CSS media query）───────
+   有些瀏覽器/WebView 環境下，純 CSS media query 可能沒有依實際
+   畫面寬度正確套用（例如「要求電腦版網站」模式）。這裡用 JS 在
+   app.js 裡即時量測 window.innerWidth 加上的 body.js-mobile
+   class，搭配 !important 強制套用手機版排版，確保側欄／地圖面板
+   一定會收合，不會整片直接顯示佔滿版面。 ─────────────────── */
+body.js-mobile #app { flex-direction: column !important; }
+body.js-mobile #sidebar {
+  position: fixed !important; top: 0 !important; left: -85% !important;
+  width: 85% !important; max-width: 320px !important;
+  height: 100vh !important; max-height: 100vh !important; z-index: 1050 !important;
+  transition: left .25s ease !important;
+}
+body.js-mobile.sidebar-open #sidebar { left: 0 !important; }
+body.js-mobile #sidebar-backdrop { display: none; }
+body.js-mobile.sidebar-open #sidebar-backdrop {
+  display: block !important; position: fixed !important; inset: 0 !important;
+  background: rgba(0,0,0,.5) !important; z-index: 1040 !important;
+}
+body.js-mobile .mobile-menu-btn { display: flex !important; }
+body.js-mobile #main-content { height: auto !important; padding: 16px !important; padding-top: 64px !important; }
+
+body.js-mobile #map-app { flex-direction: column !important; height: 100vh !important; }
+body.js-mobile #map-panel { width: 100% !important; min-width: 0 !important; }
+body.js-mobile #btn-toggle-map-panel { display: inline-block !important; }
+body.js-mobile #map-panel-body { display: none !important; max-height: 45vh !important; }
+body.js-mobile #map-panel.expanded #map-panel-body { display: block !important; }
+body.js-mobile #leaflet-map { flex: 1 !important; min-height: 45vh !important; }
 
 /* ── 小型手機（≤ 480px）─────────────────────────────── */
 @media (max-width: 480px) {
