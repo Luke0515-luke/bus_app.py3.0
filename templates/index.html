@@ -47,12 +47,13 @@
     <!-- 進階查詢 -->
     <details class="expander" id="details-advsearch">
       <summary>🔍 進階查詢（站到站）</summary>
-      <p class="caption">輸入起站與終點，找出直達或轉乘一次的路線</p>
+      <p class="caption">輸入起站與終點，找出直達或轉乘一次的路線（可直接打字搜尋站名）</p>
       <div id="adv-search-body">
         <label>出發站</label>
-        <select id="adv-start"><option value="">請選擇或輸入站名...</option></select>
+        <input type="text" id="adv-start" list="adv-stops-datalist" placeholder="輸入或選擇站名...">
         <label>目的站</label>
-        <select id="adv-end"><option value="">請選擇或輸入站名...</option></select>
+        <input type="text" id="adv-end" list="adv-stops-datalist" placeholder="輸入或選擇站名...">
+        <datalist id="adv-stops-datalist"></datalist>
         <button id="btn-adv-search" class="btn btn-block">🔎 查詢路線</button>
         <div id="adv-search-result"></div>
       </div>
@@ -61,7 +62,7 @@
     <!-- 客運查詢 -->
     <details class="expander" id="details-intercity">
       <summary>🚍 客運查詢</summary>
-      <p class="caption">選擇業者與起訖站查詢班次</p>
+      <p class="caption">選擇業者與起訖站查詢班次（可直接打字搜尋站名）</p>
       <label>選擇客運業者</label>
       <select id="ic-operator">
         {% for name, opid in intercity_operators.items() %}
@@ -69,10 +70,12 @@
         {% endfor %}
       </select>
       <div id="ic-body" class="hidden">
-        <label>起點站（含關鍵字即可）</label>
-        <input type="text" id="ic-dep" placeholder="例：台南、嘉義">
-        <label>目的站（含關鍵字即可）</label>
-        <input type="text" id="ic-dest" placeholder="例：台北、高雄">
+        <label>起點站</label>
+        <input type="text" id="ic-dep" list="ic-dep-datalist" placeholder="輸入或選擇起點站...">
+        <label>目的站</label>
+        <input type="text" id="ic-dest" list="ic-dest-datalist" placeholder="輸入或選擇目的站...">
+        <datalist id="ic-dep-datalist"></datalist>
+        <datalist id="ic-dest-datalist"></datalist>
         <div id="ic-result"></div>
       </div>
     </details>
@@ -253,7 +256,10 @@
     <section id="page-map" class="page hidden">
       <div id="map-app">
         <div id="map-panel">
-          <div id="map-panel-header">🚌 台南公車即時地圖</div>
+          <div id="map-panel-header">
+            <span>🚌 台南公車即時地圖</span>
+            <button id="btn-toggle-map-panel" type="button">☰ 更多設定</button>
+          </div>
           <div id="map-panel-body">
             <div id="map-panel-controls">
               <input id="map-route-input" type="text" placeholder="篩選路線（留空或輸入「全部」＝顯示全部路線），例：藍幹線, 綠1">
