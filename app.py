@@ -747,10 +747,13 @@ def _fetch_all_route_stops_parallel(routes):
 @cached(3600)
 def build_stop_route_index():
     """建立「站名 → 可搭乘路線」索引，供進階查詢（站到站）使用。
+    這裡刻意跟即時地圖用同一份路線清單（get_all_known_routes，系統設定的路線 ∪
+    地圖頁「已儲存路線」），不是只看系統設定的固定清單，才不會漏掉只在地圖那邊
+    存過站牌資料的路線（例如小黃公車、自訂儲存的路線）。
     不依賴手動按「系統維護」：自動走遍全部路線，data/route 裡有存檔的直接用，
     沒有的即時查詢並自動存檔（存到 /opt/render/project/data/route，會被排程備份）。"""
     index = {}
-    stops_map = _fetch_all_route_stops_parallel(ALL_ROUTE_NAMES)
+    stops_map = _fetch_all_route_stops_parallel(get_all_known_routes())
     for route_name, stops in stops_map.items():
         for stop in stops:
             if stop not in index:
@@ -986,6 +989,27 @@ def api_route_status():
     if not full_stop_list:
         return jsonify({"dest0": dest_0, "dest1": dest_1, "stops": [], "empty": True})
 
+    # TDX 的「逐站預估到站時間」（EstimatedTimeOfArrival）資料常常有缺口，
+    # 尤其班次少、或車輛剛好在兩站中間時，容易讓明明有車在跑的站被判定成「尚未發車」。
+    # 這裡另外抓「即時公車 GPS 定位」（RealTimeByFrequency，跟地圖用的是同一支端點），
+    # 用最近站的方式回頭比對，確保只要 TDX 查得到這班車，時間軸上就不會漏掉它。
+    gps_buses = fetch_bus_realtime_positions(route)
+    gps_dir_buses = [b for b in gps_buses if b.get("Direction", 0) == target_dir]
+    active_bus_count = len(gps_dir_buses)
+    gps_near_stop = {}
+    for b in gps_dir_buses:
+        pos = b.get("BusPosition", {})
+        b_lat, b_lon = pos.get("PositionLat"), pos.get("PositionLon")
+        if not b_lat or not b_lon or not stop_coord_map:
+            continue
+        best_name, best_dist = None, None
+        for name, (s_lat, s_lon) in stop_coord_map.items():
+            d = haversine(b_lat, b_lon, s_lat, s_lon)
+            if best_dist is None or d < best_dist:
+                best_dist, best_name = d, name
+        if best_name and best_dist is not None and best_dist <= 0.5:  # 500 公尺內才採信
+            gps_near_stop.setdefault(best_name, []).append(b)
+
     # UBike 建議
     ubike_suggestion = None
     if start_st and end_st and start_st != end_st:
@@ -1024,6 +1048,15 @@ def api_route_status():
             is_low, car_size = item.get("IsLowFloor", False), "大巴"
 
         time_text, badge_class = eta_status_text(eta, status)
+
+        # ETA 端點沒有這站的資料，但 GPS 定位確認附近真的有車在跑 → 用 GPS 資料補正，
+        # 不要讓使用者看到「尚未發車」卻其實漏掉了一班查得到的車
+        gps_here = gps_near_stop.get(s_name)
+        if eta is None and status in (0, 1) and gps_here:
+            gps_bus = gps_here[0]
+            if not plate:
+                plate = gps_bus.get("PlateNumb", "")
+            time_text, badge_class = "站上有車（GPS 定位）", "ts-orange"
 
         ubikes_near = []
         if s_name in stop_coord_map:
@@ -1067,6 +1100,7 @@ def api_route_status():
         "stops": stops_out,
         "ubike_suggestion": ubike_suggestion,
         "tts_text": "".join(tts_lines),
+        "active_bus_count": active_bus_count,
         "empty": False,
     })
 
