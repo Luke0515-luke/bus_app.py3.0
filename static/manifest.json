@@ -4,9 +4,9 @@
   "display": "standalone",
   "name": "台南公車查詢系統",
   "orientation": "any",
-  "scope": "/（正確）",
+  "scope": "/",
   "short_name": "台南公車助理",
-  "start_url": "/（正確）",
+  "start_url": "/",
   "theme_color": "#ffffff",
   "id": "Taiwan Bus Assistant",
   "description": "即時查詢台南公車路線與 AI 助理",
@@ -19,5 +19,17 @@
     "transportation",
     "travel",
     "utilities"
+  ],
+  "icons": [
+    {
+      "src": "/static/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/static/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
   ]
 }
