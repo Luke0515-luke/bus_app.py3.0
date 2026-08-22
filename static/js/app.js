@@ -40,7 +40,7 @@ const state = {
   mapShapeData: [],
   mapStopData: [],
   savedRoutes: [],
-  busListOpen: false,
+  busListOpen: true,
   leafletMap: null,
   busLayer: null,
   shapeLayer: null,
@@ -69,6 +69,19 @@ function applyResponsiveLayout() {
 }
 applyResponsiveLayout();
 window.addEventListener('resize', applyResponsiveLayout);
+
+// ── 日夜主題：依台南目前時間自動切換背景（白天用白、晚上用黑）──────────
+function applyTimeTheme() {
+  const hourStr = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Taipei', hour: 'numeric', hour12: false
+  }).format(new Date());
+  const hour = parseInt(hourStr, 10) % 24; // 部分瀏覽器午夜會回傳 "24"，取餘數修正成 0
+  const isNight = hour >= 18 || hour < 6;
+  document.body.classList.toggle('theme-night', isNight);
+  document.body.classList.toggle('theme-day', !isNight);
+}
+applyTimeTheme();
+setInterval(applyTimeTheme, 5 * 60 * 1000); // 每 5 分鐘重新檢查一次，日夜切換時不用整頁重新整理
 
 document.addEventListener('DOMContentLoaded', () => {
   applyResponsiveLayout();
@@ -139,9 +152,6 @@ function bindStaticEvents() {
   });
 
   el('btn-adv-search').addEventListener('click', advancedSearch);
-  el('ic-operator').addEventListener('change', onIntercityOperatorChange);
-  el('ic-dep').addEventListener('input', renderIntercityMatches);
-  el('ic-dest').addEventListener('input', renderIntercityMatches);
 
   el('btn-update-cache').addEventListener('click', updateCache);
 
@@ -234,11 +244,6 @@ async function handleHomeTile(action) {
     case 'favorites':
       openSidebar();
       el('favorites-section').classList.remove('hidden');
-      break;
-    case 'intercity':
-      openSidebar();
-      el('details-intercity').setAttribute('open', '');
-      requestAnimationFrame(() => el('details-intercity').scrollIntoView({ behavior: 'smooth', block: 'start' }));
       break;
     case 'advsearch':
       openSidebar();
@@ -460,6 +465,8 @@ async function loadRouteStatus() {
       const ev = s.is_ev ? '<span class="ev-tag">⚡ 電動</span>' : '';
       busHtml = `<span class="bus-tag">🚌 ${esc(s.plate)} (${esc(s.car_size)})</span>${wc}${ev}`;
     }
+    // 繞道／支線公車：這一班實際開往的目的地跟路線平常公告的方向不一樣時特別標示出來
+    const branchHtml = s.branch ? `<span class="branch-tag">🔀 往 ${esc(s.branch)}</span>` : '';
     const ubikeHtml = (s.ubikes || []).map(u =>
       `<span class="ubike-tag">🚲 可借:${u.available} 可還:${u.empty}</span>`).join('');
     return `
@@ -469,7 +476,7 @@ async function loadRouteStatus() {
     <div class="station-info">
       <div class="station-info-top">
         <span class="station-name">${esc(s.name)}</span>
-        ${busHtml}
+        ${busHtml}${branchHtml}
       </div>
       ${ubikeHtml ? `<div class="station-info-ubike">${ubikeHtml}</div>` : ''}
     </div>
@@ -579,20 +586,20 @@ async function loadAdvancedStops() {
   renderAdvStopOptions('');
 }
 function renderAdvStopOptions(keyword) {
+  // adv-start / adv-end 現在是「打字自動篩選」的輸入框（搭配 datalist），
+  // 使用者直接在欄位裡打字就會即時篩選建議清單；上面這個 adv-stop-search
+  // 篩選框則是原本就有的功能，保留下來，可以同時預先縮小兩個欄位的建議清單。
   const kw = keyword.trim();
   const matched = kw ? advStopsAll.filter(s => s.includes(kw)) : advStopsAll;
-  const opts = '<option value="">請選擇或輸入站名...</option>' +
-    matched.map(s => `<option value="${esc(s)}">${esc(s)}</option>`).join('');
-  ['adv-start', 'adv-end'].forEach(id => {
-    const sel = el(id);
-    const prev = sel.value;
-    sel.innerHTML = opts;
-    if (matched.includes(prev)) sel.value = prev;
+  const opts = matched.map(s => `<option value="${esc(s)}"></option>`).join('');
+  ['adv-start-list', 'adv-end-list'].forEach(id => {
+    const dl = el(id);
+    if (dl) dl.innerHTML = opts;
   });
 }
 async function advancedSearch() {
-  const start = el('adv-start').value;
-  const end = el('adv-end').value;
+  const start = el('adv-start').value.trim();
+  const end = el('adv-end').value.trim();
   const box = el('adv-search-result');
   box.innerHTML = '';
   if (!start || !end) { box.innerHTML = '<div class="error-box">請選擇出發站和目的站</div>'; return; }
@@ -618,75 +625,6 @@ async function advancedSearch() {
   } catch (e) {
     box.innerHTML = `<div class="error-box">${esc(e.message)}</div>`;
   }
-}
-
-// ── 客運查詢 ─────────────────────────────────────────────
-let icRoutesCache = [];
-async function onIntercityOperatorChange() {
-  const opId = el('ic-operator').value;
-  const body = el('ic-body');
-  const result = el('ic-result');
-  icRoutesCache = [];
-  result.innerHTML = '';
-  if (!opId) { body.classList.add('hidden'); return; }
-  body.classList.remove('hidden');
-  result.innerHTML = '<div class="caption">載入路線中...</div>';
-  const data = await api(`/api/intercity/routes?op_id=${encodeURIComponent(opId)}`);
-  icRoutesCache = data.routes;
-  if (!icRoutesCache.length) {
-    result.innerHTML = '<div class="warning-box">目前查不到該業者的路線資料</div>';
-    return;
-  }
-  result.innerHTML = `<div class="info-box">共有 ${data.total} 條路線，請輸入起點或目的站篩選</div>`;
-
-  // 把這個業者所有路線的起訖站名整理成清單，餵給 input 的 datalist，
-  // 這樣 ic-dep / ic-dest 輸入框打字時就會跳出實際存在的站名選單可以直接點選。
-  const depNames = new Set();
-  const destNames = new Set();
-  icRoutesCache.forEach(r => {
-    if (r.dep) depNames.add(r.dep);
-    if (r.dest) destNames.add(r.dest);
-  });
-  el('ic-dep-datalist').innerHTML = [...depNames].sort().map(s => `<option value="${esc(s)}"></option>`).join('');
-  el('ic-dest-datalist').innerHTML = [...destNames].sort().map(s => `<option value="${esc(s)}"></option>`).join('');
-}
-function renderIntercityMatches() {
-  const dep = el('ic-dep').value.trim();
-  const dest = el('ic-dest').value.trim();
-  const result = el('ic-result');
-  if (!icRoutesCache.length) return;
-  if (!dep && !dest) {
-    result.innerHTML = `<div class="info-box">共有 ${icRoutesCache.length} 條路線，請輸入起點或目的站篩選</div>`;
-    return;
-  }
-  const matched = icRoutesCache.filter(r =>
-    (!dep || r.label.includes(dep)) && (!dest || r.label.includes(dest)));
-  if (!matched.length) {
-    result.innerHTML = '<div class="warning-box">找不到符合的路線，請調整關鍵字</div>';
-    return;
-  }
-  result.innerHTML = `<div class="success-box">找到 ${matched.length} 條符合路線</div>` +
-    matched.slice(0, 10).map(r => `
-      <details class="expander ic-item">
-        <summary>🚍 ${esc(r.label)}</summary>
-        <div class="ic-detail" data-rid="${esc(r.rid)}"><div class="caption">點開後載入中...</div></div>
-      </details>`).join('');
-  result.querySelectorAll('details.ic-item').forEach(d => {
-    d.addEventListener('toggle', async () => {
-      if (!d.open) return;
-      const detailBox = d.querySelector('.ic-detail');
-      const rid = detailBox.dataset.rid;
-      if (detailBox.dataset.loaded) return;
-      const data = await api(`/api/intercity/detail?rid=${encodeURIComponent(rid)}`);
-      detailBox.dataset.loaded = '1';
-      if (!data.has_data || !data.stops.length) {
-        detailBox.innerHTML = '<div class="info-box">無站點資料</div>';
-        return;
-      }
-      detailBox.innerHTML = '<div class="caption"><b>停靠站與到站時間：</b></div>' +
-        data.stops.map(s => `<div class="stop-item">${s.icon} <b>${esc(s.name)}</b> — ${esc(s.text)}</div>`).join('');
-    });
-  });
 }
 
 // ── 系統維護 ─────────────────────────────────────────────
@@ -912,19 +850,41 @@ function drawMapShapes() {
 }
 function drawMapStops() {
   state.stopLayer.clearLayers();
+
+  // 同一個實體站牌常常被好幾條路線共用，如果每條路線都各自畫一個點，
+  // 同一個位置就會疊出好幾個顏色不同、重疊在一起的圓點。這裡先依「站名＋座標」
+  // 把同一個站牌合併成一個點，彈出視窗／常駐標籤改成把停靠的路線全部列出來，
+  // 而不是每條路線各顯示一次。
+  const merged = new Map();
   state.mapStopData.forEach(sp => {
     if (!state.mapActiveRoutes.has(sp.route)) return;
+    const key = `${sp.name}|${sp.lat.toFixed(5)}|${sp.lon.toFixed(5)}`;
+    if (!merged.has(key)) {
+      merged.set(key, { name: sp.name, lat: sp.lat, lon: sp.lon, routes: [] });
+    }
+    const entry = merged.get(key);
+    if (!entry.routes.some(r => r.route === sp.route)) {
+      entry.routes.push({ route: sp.route, color: sp.color });
+    }
+  });
+
+  merged.forEach(sp => {
+    const multi = sp.routes.length > 1;
+    const dotColor = multi ? '#ffffff' : sp.routes[0].color;
+    const routeTags = sp.routes
+      .map(r => `<span class="tag" style="background:${r.color}">${esc(r.route)}</span>`)
+      .join(' ');
     L.circleMarker([sp.lat, sp.lon], {
-      radius: 4, weight: 1, color: '#ffffff', opacity: 0.9,
-      fillColor: sp.color, fillOpacity: 0.95
+      radius: multi ? 5 : 4, weight: multi ? 2 : 1, color: '#ffffff', opacity: 0.9,
+      fillColor: dotColor, fillOpacity: 0.95
     })
       // 常駐標籤：放大到一定程度後才顯示，避免縮小檢視時上千個站名疊在一起看不清楚
-      .bindTooltip(sp.name, {
+      .bindTooltip(multi ? `${sp.name}（${sp.routes.length} 條路線）` : sp.name, {
         permanent: true, direction: 'right', offset: L.point(7, 0),
         className: 'stop-label', opacity: 0.9
       })
-      // 不論目前是否放大，點擊/點選圓點都能直接看到站名（手機點按也適用）
-      .bindPopup(`<b style="color:${sp.color}">${esc(sp.route)}</b><br>🚏 ${esc(sp.name)}`)
+      // 不論目前是否放大，點擊/點選圓點都能直接看到站名跟所有停靠路線（手機點按也適用）
+      .bindPopup(`<b>🚏 ${esc(sp.name)}</b><br>${routeTags}`)
       .addTo(state.stopLayer);
   });
   updateStopLabelVisibility();
@@ -952,7 +912,8 @@ function drawMapBuses() {
         <span class="tag" style="background:${b.color}">車牌：${esc(b.plate)}</span>
         <span class="tag" style="background:#555">方向：${esc(b.dir)}</span>
         <span class="tag" style="background:#333">速度：${esc(String(b.speed))} km/h</span>
-      </div>`, { maxWidth: 200 });
+        ${b.branch ? `<span class="tag" style="background:#f39c12">🔀 往 ${esc(b.branch)}</span>` : ''}
+      </div>`, { maxWidth: 220 });
     marker.addTo(state.busLayer);
     total++;
   });
@@ -971,16 +932,20 @@ function renderMapBusList() {
   if (!btn || !container) return;
 
   const inputVal = el('map-route-input').value.trim();
+  // 「有篩選」不是只看上面那個文字輸入框，直接在下面路線清單點選一條（或少數幾條）
+  // 路線一樣算有篩選 —— 之前只認輸入框的話，用清單點路線篩出來的公車定位清單就會
+  // 整個消失不見，這是原本「左邊公車班次資訊不見了」的主因。
+  const hasSelection = !!inputVal ||
+    (state.mapActiveRoutes.size > 0 && state.mapActiveRoutes.size < state.mapAllRoutes.length);
   const buses = state.mapBusData
     .filter(b => state.mapActiveRoutes.has(b.route))
     .sort((a, b) => a.route.localeCompare(b.route) || String(a.plate).localeCompare(String(b.plate)));
 
-  if (!inputVal) {
-    // 沒有輸入特定路線（顯示全部路線）時，公車數量太多不適合列清單，直接隱藏按鈕與清單
+  if (!hasSelection) {
+    // 顯示「全部路線」時公車數量太多不適合列清單，直接隱藏按鈕與清單
     btn.classList.add('hidden');
     container.classList.add('hidden');
     container.innerHTML = '';
-    state.busListOpen = false;
     return;
   }
 
@@ -1010,6 +975,7 @@ function renderMapBusList() {
         <span class="tag" style="background:${b.color}">${esc(b.route)}</span>
         車牌 <b>${esc(b.plate || '未知')}</b>
         ・${esc(b.dir)}
+        ${b.branch ? `・<span class="tag" style="background:#f39c12">🔀 往 ${esc(b.branch)}</span>` : ''}
         ・${esc(String(b.speed))} km/h
         ・📍 ${Number(b.lat).toFixed(5)}, ${Number(b.lon).toFixed(5)}
       </div>`).join('');
