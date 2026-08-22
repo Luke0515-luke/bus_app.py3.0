@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 
 import requests
 from flask import Flask, render_template, request, jsonify, session
+from werkzeug.security import generate_password_hash, check_password_hash
 from dotenv import load_dotenv
 
 try:
@@ -56,6 +57,29 @@ UBIKE_SPEED_KMH = 15  # 估算騎車速度（OSRM 失敗時備用）
 # Render 硬碟根目錄、不會被備份的暫存快取檔。
 ROUTE_DATA_SAVE_DIR = "/opt/render/project/data/route"
 _route_file_lock = threading.Lock()
+
+# 使用者帳號資料（登入系統）。跟路線原始資料放在同一個會被排程備份到 GitHub 的
+# /opt/render/project/data 底下，Render 重啟、清空硬碟也不會遺失已註冊的帳號。
+USERS_FILE = "/opt/render/project/data/users.json"
+_users_lock = threading.Lock()
+
+
+def _load_users():
+    try:
+        with open(USERS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def _save_users(users):
+    with _users_lock:
+        try:
+            os.makedirs(os.path.dirname(USERS_FILE), exist_ok=True)
+            with open(USERS_FILE, "w", encoding="utf-8") as f:
+                json.dump(users, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"⚠️ 寫入使用者資料失敗：{e}")
 
 
 def _route_stop_file_path(route_name):
@@ -376,24 +400,52 @@ def cached(ttl_seconds):
 SESSION_STORE = {}
 
 
+def _default_state():
+    return {
+        "recent_routes": [],
+        "favorite_routes": [],
+        "chat_sessions": {},
+        "current_session_id": None,
+        "current_weather": "尚未查詢",
+        "bus_status": "尚未查詢路線",
+    }
+
+
 def get_uid():
-    if "uid" not in session:
-        session["uid"] = str(uuid.uuid4())
-    uid = session["uid"]
+    # 已登入的話用「使用者帳號」當作 key，這樣最愛路線／最近查詢／對話記錄
+    # 才會綁定在帳號上，換裝置、換瀏覽器登入同一個帳號都看得到；
+    # 沒登入則照舊用瀏覽器 session 產生的匿名 uid。
+    if session.get("username"):
+        uid = f"user:{session['username']}"
+    else:
+        if "uid" not in session:
+            session["uid"] = str(uuid.uuid4())
+        uid = session["uid"]
     if uid not in SESSION_STORE:
-        SESSION_STORE[uid] = {
-            "recent_routes": [],
-            "favorite_routes": [],
-            "chat_sessions": {},
-            "current_session_id": None,
-            "current_weather": "尚未查詢",
-            "bus_status": "尚未查詢路線",
-        }
+        SESSION_STORE[uid] = _default_state()
     return uid
 
 
 def get_state():
     return SESSION_STORE[get_uid()]
+
+
+def _login_user(username):
+    """把目前瀏覽器的匿名資料（如果有的話）搬到帳號底下，再切換 session 成已登入狀態，
+    這樣登入前查過的最愛／最近路線不會直接消失不見。"""
+    old_uid = session.get("uid")
+    session["username"] = username
+    session.pop("uid", None)
+    new_uid = f"user:{username}"
+    if new_uid not in SESSION_STORE:
+        SESSION_STORE[new_uid] = _default_state()
+    if old_uid and old_uid in SESSION_STORE:
+        old_state = SESSION_STORE[old_uid]
+        new_state = SESSION_STORE[new_uid]
+        if not new_state.get("favorite_routes") and old_state.get("favorite_routes"):
+            new_state["favorite_routes"] = old_state["favorite_routes"]
+        if not new_state.get("recent_routes") and old_state.get("recent_routes"):
+            new_state["recent_routes"] = old_state["recent_routes"]
 
 
 # ── 基礎工具 ──────────────────────────────────────────────
@@ -869,6 +921,57 @@ def index():
 
 
 # ══════════════════════════════════════════════════════════
+# API：帳號登入
+# ══════════════════════════════════════════════════════════
+@app.route('/api/auth/status')
+def api_auth_status():
+    return jsonify({"username": session.get("username")})
+
+
+@app.route('/api/auth/register', methods=['POST'])
+def api_auth_register():
+    data = request.get_json(silent=True) or {}
+    username = (data.get('username') or '').strip()
+    password = data.get('password') or ''
+    if not username or not password:
+        return jsonify({"error": "請輸入帳號與密碼"}), 400
+    if len(username) < 2:
+        return jsonify({"error": "帳號至少需要 2 個字"}), 400
+    if len(password) < 4:
+        return jsonify({"error": "密碼至少需要 4 碼"}), 400
+    users = _load_users()
+    if username in users:
+        return jsonify({"error": "這個帳號已經被註冊了，請直接登入或換一個帳號"}), 400
+    users[username] = {
+        "password_hash": generate_password_hash(password),
+        "created": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    _save_users(users)
+    _login_user(username)
+    return jsonify({"username": username})
+
+
+@app.route('/api/auth/login', methods=['POST'])
+def api_auth_login():
+    data = request.get_json(silent=True) or {}
+    username = (data.get('username') or '').strip()
+    password = data.get('password') or ''
+    users = _load_users()
+    u = users.get(username)
+    if not u or not check_password_hash(u.get("password_hash", ""), password):
+        return jsonify({"error": "帳號或密碼錯誤"}), 401
+    _login_user(username)
+    return jsonify({"username": username})
+
+
+@app.route('/api/auth/logout', methods=['POST'])
+def api_auth_logout():
+    session.pop("username", None)
+    session.pop("uid", None)
+    return jsonify({"ok": True})
+
+
+# ══════════════════════════════════════════════════════════
 # API：基礎資料
 # ══════════════════════════════════════════════════════════
 @app.route('/api/weather')
@@ -1062,7 +1165,7 @@ def api_route_status():
             gps_bus = gps_here[0]
             if not plate:
                 plate = gps_bus.get("PlateNumb", "")
-            time_text, badge_class = "站上有車（GPS 定位）", "ts-orange"
+            time_text, badge_class = "進站中", "ts-red"
 
         # 即時動態、GPS 都完全查不到資料 → 最後退回用固定時刻表概估（僅供參考），
         # 避免像「新營站其實再 44 分鐘有車」卻一直顯示「尚未發車」什麼資訊都沒有。
@@ -1312,14 +1415,16 @@ def api_yellow_bus_routes():
     return jsonify({"routes": result, "total": len(result)})
 
 
-@cached(600)
 def fetch_route_schedule(route_name):
     """取得某路線的固定時刻表（TDX Bus/Schedule）。
     小黃公車、支線公車大多是固定班次時刻，跟幹線那種『依班距發車』不一樣，
     所以另外用這支端點取時刻表，而不是即時動態。
-    跟站牌／軌跡資料一樣，優先讀取 /opt/render/project/data/route 底下已存檔的資料
-    （會自動被排程備份到 GitHub），沒有的話才即時查 TDX 並自動存檔，之後同一路線
-    就不用每次打開時刻表都重新等 TDX 回應。"""
+    跟站牌／軌跡資料走同一套「查一次、長期存檔」的邏輯（load_route_timetable_data
+    本身就會優先讀取已存檔的資料），這裡刻意不再疊加額外的短 TTL 記憶體快取——
+    之前疊了一層 10 分鐘的快取，會連『TDX 暫時查詢頻率過高、這次剛好查空了』的
+    空結果都一起快取住，導致明明時刻表存檔還在，畫面卻有 10 分鐘看起來像沒有
+    時刻表資料。拿掉這層之後行為才會跟站牌資料一致：查得到就直接長期沿用存檔，
+    查不到就下一次請求時重試，不會被自己快取卡住。"""
     return load_route_timetable_data(route_name)
 
 
@@ -1543,9 +1648,22 @@ def api_chat():
         msgs.append({"role": h["role"], "content": h["content"]})
     msgs.append({"role": "user", "content": user_q})
 
+    # Groq 三不五時會下架／改名模型（例如 2026/06 就把 llama-3.3-70b-versatile 整個下架），
+    # 一旦主要模型剛好被下架，直接整個 AI 功能掛掉太可惜，這裡準備幾個備援模型依序嘗試。
+    candidate_models = ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.6-27b"]
+    resp = None
+    last_err = None
+    for m in candidate_models:
+        try:
+            resp = client.chat.completions.create(messages=msgs, model=m, max_tokens=1024)
+            break
+        except Exception as e:
+            last_err = e
+            continue
+
     try:
-        resp = client.chat.completions.create(
-            messages=msgs, model="llama-3.3-70b-versatile", max_tokens=1024)
+        if resp is None:
+            raise last_err or RuntimeError("AI 模型目前都無法使用")
         ai_text = resp.choices[0].message.content
 
         if len(sess["history"]) == 0:
