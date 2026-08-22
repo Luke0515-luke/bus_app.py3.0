@@ -50,35 +50,16 @@
       <summary>🔍 進階查詢（站到站）</summary>
       <p class="caption">輸入起站與終點，找出直達或轉乘一次的路線</p>
       <div id="adv-search-body">
-        <label>🔎 快速篩選站名（可不填，直接在下面選單找也可以）</label>
+        <label>🔎 快速篩選站名（可不填，直接在下面欄位打字或選單找也可以）</label>
         <input type="text" id="adv-stop-search" placeholder="輸入關鍵字篩選下面的站名選單...">
         <label>出發站</label>
-        <select id="adv-start"><option value="">請選擇或輸入站名...</option></select>
+        <input type="text" id="adv-start" list="adv-start-list" placeholder="請選擇或輸入站名...">
+        <datalist id="adv-start-list"></datalist>
         <label>目的站</label>
-        <select id="adv-end"><option value="">請選擇或輸入站名...</option></select>
+        <input type="text" id="adv-end" list="adv-end-list" placeholder="請選擇或輸入站名...">
+        <datalist id="adv-end-list"></datalist>
         <button id="btn-adv-search" class="btn btn-block">🔎 查詢路線</button>
         <div id="adv-search-result"></div>
-      </div>
-    </details>
-
-    <!-- 客運查詢 -->
-    <details class="expander" id="details-intercity">
-      <summary>🚍 客運查詢</summary>
-      <p class="caption">選擇業者與起訖站查詢班次（可直接打字搜尋站名）</p>
-      <label>選擇客運業者</label>
-      <select id="ic-operator">
-        {% for name, opid in intercity_operators.items() %}
-        <option value="{{ opid or '' }}">{{ name }}</option>
-        {% endfor %}
-      </select>
-      <div id="ic-body" class="hidden">
-        <label>起點站</label>
-        <input type="text" id="ic-dep" list="ic-dep-datalist" placeholder="輸入或選擇起點站...">
-        <label>目的站</label>
-        <input type="text" id="ic-dest" list="ic-dest-datalist" placeholder="輸入或選擇目的站...">
-        <datalist id="ic-dep-datalist"></datalist>
-        <datalist id="ic-dest-datalist"></datalist>
-        <div id="ic-result"></div>
       </div>
     </details>
 
@@ -116,9 +97,6 @@
         </button>
         <button class="home-tile home-tile-yellow" data-action="yellow-bus">
           <span class="home-tile-icon">🚕</span><span>小黃公車</span>
-        </button>
-        <button class="home-tile home-tile-intercity" data-action="intercity">
-          <span class="home-tile-icon">🚍</span><span>客運查詢</span>
         </button>
         <button class="home-tile home-tile-adv" data-action="advsearch">
           <span class="home-tile-icon">🔎</span><span>站到站查詢</span>
