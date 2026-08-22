@@ -45,6 +45,7 @@ const state = {
   busLayer: null,
   shapeLayer: null,
   stopLayer: null,
+  userLocationLayer: null,
   ttsText: '',
 };
 
@@ -93,6 +94,7 @@ document.addEventListener('DOMContentLoaded', () => {
   loadChatSessions();
   loadChatCurrent();
   loadAdvancedStops();
+  loadAuthStatus();
 });
 
 function bindStaticEvents() {
@@ -154,6 +156,13 @@ function bindStaticEvents() {
   el('btn-adv-search').addEventListener('click', advancedSearch);
 
   el('btn-update-cache').addEventListener('click', updateCache);
+
+  el('btn-login').addEventListener('click', () => submitAuth('/api/auth/login'));
+  el('btn-register').addEventListener('click', () => submitAuth('/api/auth/register'));
+  el('btn-logout').addEventListener('click', logoutAccount);
+  el('auth-password').addEventListener('keydown', e => { if (e.key === 'Enter') submitAuth('/api/auth/login'); });
+
+  el('btn-map-locate').addEventListener('click', locateMeOnMap);
 
   el('btn-chat-send').addEventListener('click', sendChat);
   el('chat-input').addEventListener('keydown', e => { if (e.key === 'Enter') sendChat(); });
@@ -627,6 +636,56 @@ async function advancedSearch() {
   }
 }
 
+// ── 帳號登入 ─────────────────────────────────────────────
+async function loadAuthStatus() {
+  try {
+    const data = await api('/api/auth/status');
+    renderAuthState(data.username || null);
+  } catch (e) {
+    renderAuthState(null);
+  }
+}
+function renderAuthState(username) {
+  const loggedOut = el('account-logged-out');
+  const loggedIn = el('account-logged-in');
+  if (username) {
+    loggedOut.classList.add('hidden');
+    loggedIn.classList.remove('hidden');
+    el('account-username').textContent = username;
+  } else {
+    loggedOut.classList.remove('hidden');
+    loggedIn.classList.add('hidden');
+  }
+}
+async function submitAuth(url) {
+  const username = el('auth-username').value.trim();
+  const password = el('auth-password').value;
+  const statusBox = el('auth-status');
+  if (!username || !password) {
+    statusBox.innerHTML = '<div class="error-box">請輸入帳號與密碼</div>';
+    return;
+  }
+  statusBox.innerHTML = '<div class="caption">處理中...</div>';
+  try {
+    const data = await api(url, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password })
+    });
+    statusBox.innerHTML = '';
+    el('auth-password').value = '';
+    renderAuthState(data.username);
+    // 登入／註冊後身分變了，最愛路線、最近查詢、AI 對話記錄都要重新載入成這個帳號的資料
+    await Promise.all([loadFavorites(), loadRecent(), loadChatSessions(), loadChatCurrent()]);
+  } catch (e) {
+    statusBox.innerHTML = `<div class="error-box">${esc(e.message)}</div>`;
+  }
+}
+async function logoutAccount() {
+  await api('/api/auth/logout', { method: 'POST' });
+  renderAuthState(null);
+  await Promise.all([loadFavorites(), loadRecent(), loadChatSessions(), loadChatCurrent()]);
+}
+
 // ── 系統維護 ─────────────────────────────────────────────
 async function updateCache() {
   const box = el('cache-status');
@@ -722,11 +781,44 @@ function initMapPageIfNeeded() {
   state.shapeLayer = L.layerGroup().addTo(state.leafletMap);
   state.stopLayer = L.layerGroup().addTo(state.leafletMap);
   state.busLayer = L.layerGroup().addTo(state.leafletMap);
+  state.userLocationLayer = L.layerGroup().addTo(state.leafletMap);
   state.leafletMap.on('zoomend', updateStopLabelVisibility);
   // 「已儲存路線」清單先用一支很輕量的 API 立刻列出來，不用等整張地圖（公車＋路線＋站牌）
   // 全部抓完才顯示，使用者一打開地圖頁馬上就看得到已經存過檔的路線。
   loadSavedRoutesOnly();
   loadMapData(false);
+}
+
+// 定位使用者目前的位置，畫一個藍點＋精準度圓圈標示在地圖上，並飛過去該位置。
+function locateMeOnMap() {
+  const status = el('map-locate-status');
+  if (!navigator.geolocation) {
+    status.innerHTML = '<div class="error-box">瀏覽器不支援定位功能</div>';
+    return;
+  }
+  if (!state.leafletMap) {
+    status.innerHTML = '<div class="error-box">地圖尚未載入完成，請稍後再試</div>';
+    return;
+  }
+  status.innerHTML = '<div class="caption">定位中...</div>';
+  navigator.geolocation.getCurrentPosition(pos => {
+    const { latitude, longitude, accuracy } = pos.coords;
+    state.userLocationLayer.clearLayers();
+    L.circle([latitude, longitude], {
+      radius: accuracy || 30, color: '#4A90E2', fillColor: '#4A90E2', fillOpacity: 0.12, weight: 1
+    }).addTo(state.userLocationLayer);
+    L.marker([latitude, longitude], {
+      icon: L.divIcon({
+        className: '',
+        html: '<div style="width:16px;height:16px;background:#4A90E2;border:3px solid #fff;border-radius:50%;box-shadow:0 0 8px #4A90E2;"></div>',
+        iconSize: [16, 16], iconAnchor: [8, 8]
+      })
+    }).bindPopup('📍 我的位置').addTo(state.userLocationLayer);
+    state.leafletMap.flyTo([latitude, longitude], 16);
+    status.innerHTML = '<div class="success-box">已定位到你目前的位置</div>';
+  }, () => {
+    status.innerHTML = '<div class="error-box">無法取得定位，請確認已允許瀏覽器的定位權限</div>';
+  }, { enableHighAccuracy: true, timeout: 10000 });
 }
 
 // 只拉「已儲存路線」清單（不含地圖上的公車/路線/站牌），一開地圖頁就先顯示出來。
@@ -870,7 +962,7 @@ function drawMapStops() {
 
   merged.forEach(sp => {
     const multi = sp.routes.length > 1;
-    const dotColor = multi ? '#ffffff' : sp.routes[0].color;
+    const dotColor = multi ? '#000000' : sp.routes[0].color;
     const routeTags = sp.routes
       .map(r => `<span class="tag" style="background:${r.color}">${esc(r.route)}</span>`)
       .join(' ');
