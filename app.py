@@ -4,7 +4,7 @@ import math
 import time
 import uuid
 import concurrent.futures
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import requests
 from flask import Flask, render_template, request, jsonify, session
@@ -257,21 +257,6 @@ ROUTE_COLOR_MAP = {
     "東山": "#FF6F00", "梅嶺": "#AD1457", "菱波": "#00838F", "雙層": "#BF360C",
 }
 
-INTERCITY_OPERATORS = {
-    "（請選擇）": None,
-    "統聯客運": "851",
-    "國光客運": "805",
-    "和欣客運": "822",
-    "阿羅哈客運": "826",
-    "嘉義客運": "602",
-    "台南客運": "646",
-    "興南客運": "647",
-    "新營客運": "648",
-    "豐原客運": "717",
-    "中壢客運": "719",
-}
-
-
 async def backup():
         try:
             # 備份來源與儲存位置
@@ -385,41 +370,6 @@ def cached(ttl_seconds):
         wrapper.__name__ = func.__name__
         return wrapper
     return decorator
-
-
-@cached(86400)
-def fetch_intercity_operators_from_tdx():
-    """直接向 TDX 查詢公路客運（跨縣市）的業者清單，取得真正對應的 OperatorID。
-    原本 INTERCITY_OPERATORS 是手動抄錄的固定代碼，一旦代碼跟 TDX 實際的對不上，
-    不管選哪個業者查詢都會是空的（『一直顯示沒有業者資料』）。改成直接向 TDX 要
-    最新、正確的業者清單，才不會一直卡在猜代碼猜錯的問題。"""
-    url = "https://tdx.transportdata.tw/api/basic/v2/Bus/Operator/InterCity?%24format=JSON"
-    try:
-        res = requests.get(url, headers=tdx_headers(), timeout=10)
-        if res.status_code == 200:
-            data = res.json()
-            result = {}
-            for op in data:
-                name = op.get("OperatorName", {}).get("Zh_tw", "")
-                opid = op.get("OperatorID", "")
-                if name and opid:
-                    result[name] = opid
-            if result:
-                return result
-    except Exception:
-        pass
-    return {}
-
-
-def get_intercity_operators():
-    """業者清單：優先用即時向 TDX 查回來、保證正確的清單；
-    如果 TDX 這支端點一時查不到，才退回手動維護的固定清單當備援，不會整個掛掉。"""
-    dynamic = fetch_intercity_operators_from_tdx()
-    if dynamic:
-        merged = {"（請選擇）": None}
-        merged.update(dict(sorted(dynamic.items(), key=lambda kv: kv[0])))
-        return merged
-    return INTERCITY_OPERATORS
 
 
 # ── in-memory 使用者 session store（等同於 st.session_state）──
@@ -855,6 +805,59 @@ def eta_status_text(eta, status):
     return "尚未發車", "ts-gray"
 
 
+_WEEKDAY_KEYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+
+
+def _schedule_departure_times(route, direction):
+    """回傳某路線／方向，「今天」（依星期幾比對服務日曆）所有固定班次的發車時間
+    （today 的 datetime 物件）。沒有固定時刻表資料就回傳空 list。
+    只在即時動態／GPS 都查不到資料時，拿來當備援估算用，不是每次都查。"""
+    raw = fetch_route_schedule(route)
+    if not raw:
+        return []
+    now = datetime.now()
+    weekday_key = _WEEKDAY_KEYS[now.weekday()]
+    times = []
+    for entry in raw:
+        if entry.get("Direction", 0) != direction:
+            continue
+        for t in entry.get("Timetables", []):
+            svc = t.get("ServiceDay") or {}
+            # 有 ServiceDay 資訊的話要符合今天星期幾；完全沒標示服務日曆的視為每天都有發車
+            if svc and not svc.get(weekday_key, False):
+                continue
+            dep_str = t.get("DepartureTime", "")
+            if not dep_str:
+                continue
+            try:
+                parts = dep_str.split(":")
+                dep_dt = now.replace(hour=int(parts[0]), minute=int(parts[1]), second=0, microsecond=0)
+            except Exception:
+                continue
+            times.append(dep_dt)
+    return times
+
+
+def estimate_eta_from_schedule(dep_times, stop_index):
+    """即時動態／GPS 都沒有這站的資料時，退回用固定時刻表概估到站時間：
+    「發車時間 ＋ 每站約 2 分鐘（跟轉乘建議用的估算基準一致）」。
+    僅供參考用的備援估算，不是真正的即時動態，所以呼叫端要另外標示清楚。"""
+    if not dep_times:
+        return None
+    now = datetime.now()
+    offset = timedelta(seconds=stop_index * 120)
+    best = None
+    for dep_dt in dep_times:
+        diff = (dep_dt + offset - now).total_seconds()
+        if diff < -60:
+            # 這班車照時刻表推算應該早就過站了，不列入（可能是今天已經跑完的班次）
+            continue
+        diff = max(diff, 0)
+        if best is None or diff < best:
+            best = diff
+    return best
+
+
 # ══════════════════════════════════════════════════════════
 # 頁面路由
 # ══════════════════════════════════════════════════════════
@@ -862,8 +865,7 @@ def eta_status_text(eta, status):
 def index():
     get_uid()
     return render_template('index.html',
-                            route_categories=ROUTE_CATEGORIES,
-                            intercity_operators=get_intercity_operators())
+                            route_categories=ROUTE_CATEGORIES)
 
 
 # ══════════════════════════════════════════════════════════
@@ -1028,8 +1030,12 @@ def api_route_status():
     stops_out = []
     ai_log_list = []
     seen_plates = set()  # 用來讓同一輛實體公車只在最接近的站顯示一次（依目前位置單一顯示）
+    main_dest = dest_0 if direction == "去程" else dest_1
+    # 即時動態／GPS 都查不到資料時的最後備援：用固定時刻表概估到站時間（例如「尚未發車」
+    # 但其實時刻表上等一下就有一班車），這裡只查一次，下面逐站比對時重複使用。
+    schedule_dep_times = _schedule_departure_times(route, target_dir)
 
-    for s_name in full_stop_list:
+    for idx, s_name in enumerate(full_stop_list):
         item = realtime_map.get(s_name, {})
         eta = item.get("EstimateTime")
         status = item.get("StopStatus", 1)
@@ -1058,6 +1064,30 @@ def api_route_status():
                 plate = gps_bus.get("PlateNumb", "")
             time_text, badge_class = "站上有車（GPS 定位）", "ts-orange"
 
+        # 即時動態、GPS 都完全查不到資料 → 最後退回用固定時刻表概估（僅供參考），
+        # 避免像「新營站其實再 44 分鐘有車」卻一直顯示「尚未發車」什麼資訊都沒有。
+        est_from_schedule = None
+        if eta is None and not gps_here and status in (0, 1):
+            est_from_schedule = estimate_eta_from_schedule(schedule_dep_times, idx)
+            if est_from_schedule is not None:
+                mins = int(est_from_schedule // 60)
+                time_text = "即將進站（時刻表估計）" if mins <= 0 else f"約 {mins} 分鐘（時刻表估計）"
+                badge_class = "ts-blue"
+
+        # 支線／繞道：這一班車實際開往的目的地跟這條路線平常公告的方向不一樣時，
+        # 特別標示出來，不要讓人誤以為所有車都開到同一個終點站。
+        sub_route = (item.get("SubRouteName") or {}).get("Zh_tw", "") if item else ""
+        dest_stop = (item.get("DestinationStopNameZh") or "") if item else ""
+        if not dest_stop and not sub_route and gps_here:
+            gb = gps_here[0]
+            dest_stop = gb.get("DestinationStopNameZh", "") or ""
+            sub_route = (gb.get("SubRouteName") or {}).get("Zh_tw", "")
+        branch_label = ""
+        if dest_stop and dest_stop != main_dest:
+            branch_label = dest_stop
+        elif sub_route and sub_route != route:
+            branch_label = sub_route
+
         ubikes_near = []
         if s_name in stop_coord_map:
             s_lat, s_lon = stop_coord_map[s_name]
@@ -1084,6 +1114,8 @@ def api_route_status():
             "has_bus": show_bus_tag,
             "ubikes": ubikes_near,
             "is_waiting_stop": bool(start_st and s_name == start_st),
+            "branch": branch_label,
+            "is_schedule_estimate": est_from_schedule is not None,
         })
 
         if start_st and s_name == start_st:
@@ -1172,99 +1204,6 @@ def api_advanced_search():
 
 
 # ══════════════════════════════════════════════════════════
-# API：客運（跨縣市）查詢
-# ══════════════════════════════════════════════════════════
-@cached(3600)
-def fetch_intercity_routes_by_op(op_id):
-    url = (f"https://tdx.transportdata.tw/api/basic/v2/Bus/Route/InterCity"
-           f"?%24filter=OperatorIDs/any(o:o%20eq%20'{op_id}')&%24format=JSON")
-    try:
-        res = requests.get(url, headers=tdx_headers(), timeout=10)
-        if res.status_code == 200:
-            return res.json()
-    except Exception:
-        pass
-    return []
-
-
-@cached(60)
-def fetch_intercity_eta(route_id):
-    url = f"https://tdx.transportdata.tw/api/basic/v2/Bus/EstimatedTimeOfArrival/InterCity/{route_id}?%24format=JSON"
-    try:
-        res = requests.get(url, headers=tdx_headers(), timeout=8)
-        if res.status_code == 200:
-            return res.json()
-    except Exception:
-        pass
-    return []
-
-
-@cached(3600)
-def fetch_intercity_stops(route_id):
-    url = f"https://tdx.transportdata.tw/api/basic/v2/Bus/StopOfRoute/InterCity/{route_id}?%24format=JSON"
-    try:
-        res = requests.get(url, headers=tdx_headers(), timeout=8)
-        if res.status_code == 200:
-            return res.json()
-    except Exception:
-        pass
-    return []
-
-
-@app.route('/api/intercity/operators')
-def api_intercity_operators():
-    return jsonify({"operators": get_intercity_operators()})
-
-
-@app.route('/api/intercity/routes')
-def api_intercity_routes():
-    op_id = request.args.get('op_id', '')
-    if not op_id:
-        return jsonify({"routes": []})
-    ic_routes = fetch_intercity_routes_by_op(op_id)
-    route_options = []
-    for r in ic_routes:
-        dep = r.get("DepartureStopNameZh", "")
-        dest = r.get("DestinationStopNameZh", "")
-        rname = r.get("RouteName", {}).get("Zh_tw", "")
-        rid = r.get("RouteUID", "")
-        route_options.append({"label": f"{dep} → {dest}（{rname}）", "rid": rid, "dep": dep, "dest": dest})
-    return jsonify({"routes": route_options, "total": len(ic_routes)})
-
-
-@app.route('/api/intercity/detail')
-def api_intercity_detail():
-    rid = request.args.get('rid', '')
-    if not rid:
-        return jsonify({"error": "缺少路線代碼"}), 400
-    stops_data = fetch_intercity_stops(rid)
-    eta_data = fetch_intercity_eta(rid)
-    eta_map = {}
-    for e in eta_data:
-        sn = e.get("StopName", {}).get("Zh_tw", "")
-        eta_map[sn] = (e.get("EstimateTime"), e.get("StopStatus", 1))
-
-    out = []
-    for dir_data in stops_data[:1]:
-        for s in dir_data.get("Stops", []):
-            sn = s.get("StopName", {}).get("Zh_tw", "")
-            eta_s, status = eta_map.get(sn, (None, 1))
-            if eta_s is not None:
-                t = "即將進站" if eta_s <= 120 else f"{eta_s // 60} 分鐘"
-                icon = "🟢"
-            elif status == 3:
-                t, icon = "末班車已過", "⚫"
-            elif status == 4:
-                t, icon = "今日停駛", "🔴"
-            elif status == 0:
-                t, icon = "營運中（無預估時間）", "⚪"
-            else:
-                t, icon = "尚未發車", "⚪"
-            out.append({"name": sn, "text": t, "icon": icon})
-    return jsonify({"stops": out, "has_data": bool(stops_data)})
-
-
-# ══════════════════════════════════════════════════════════
 # API：地圖頁面
 # ══════════════════════════════════════════════════════════
 @app.route('/api/map_data')
@@ -1292,12 +1231,18 @@ def api_map_data():
         if not lat or not lon or not route:
             continue
         live_route_set.add(route)
+        # 有些車是繞道／支線行駛，實際終點跟路線平常公告的不一樣，這裡一併帶出來，
+        # 前端才能在地圖上特別標示「這班車是開去哪裡」。
+        sub_route = (bus.get("SubRouteName") or {}).get("Zh_tw", "")
+        dest_stop = bus.get("DestinationStopNameZh", "") or ""
+        branch = dest_stop or (sub_route if sub_route and sub_route != route else "")
         bus_features.append({
             "lat": lat, "lon": lon, "route": route,
             "plate": bus.get("PlateNumb", ""),
             "dir": "去程" if bus.get("Direction", 0) == 0 else "回程",
             "speed": bus.get("Speed", "?"),
-            "color": get_route_color(route)
+            "color": get_route_color(route),
+            "branch": branch,
         })
 
     # 無論該路線目前有沒有營運中的公車，都要能顯示其路線軌跡與站牌，
