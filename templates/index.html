@@ -4,7 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>🚌 台南公車 AI 助理</title>
-<link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -60,6 +59,27 @@
         <datalist id="adv-end-list"></datalist>
         <button id="btn-adv-search" class="btn btn-block">🔎 查詢路線</button>
         <div id="adv-search-result"></div>
+      </div>
+    </details>
+
+    <!-- 帳號登入 -->
+    <details class="expander" id="details-account">
+      <summary>👤 帳號登入</summary>
+      <div id="account-logged-out">
+        <p class="caption">登入後，最愛路線、最近查詢、AI 對話記錄都會綁定在帳號上，換裝置、換瀏覽器登入一樣看得到。</p>
+        <label>帳號</label>
+        <input type="text" id="auth-username" placeholder="輸入帳號...">
+        <label>密碼</label>
+        <input type="password" id="auth-password" placeholder="輸入密碼...">
+        <div class="dir-buttons">
+          <button id="btn-login" class="btn dir-btn">🔑 登入</button>
+          <button id="btn-register" class="btn dir-btn">📝 註冊新帳號</button>
+        </div>
+        <div id="auth-status"></div>
+      </div>
+      <div id="account-logged-in" class="hidden">
+        <p class="caption">已登入：<b id="account-username"></b></p>
+        <button id="btn-logout" class="btn btn-block">🚪 登出</button>
       </div>
     </details>
 
@@ -248,6 +268,8 @@
                 <button id="btn-map-refresh" class="btn">🔄 更新</button>
                 <button id="btn-map-home" class="btn">🏠 回查詢頁</button>
               </div>
+              <button id="btn-map-locate" class="btn btn-block">📍 定位我的位置</button>
+              <div id="map-locate-status" class="caption"></div>
               <div id="map-caption" class="caption"></div>
               <button id="btn-toggle-bus-list" class="btn btn-block hidden"></button>
               <div id="map-bus-list" class="hidden" style="max-height:260px;overflow-y:auto;-webkit-overflow-scrolling:touch;"></div>
