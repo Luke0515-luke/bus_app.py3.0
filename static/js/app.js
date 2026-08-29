@@ -35,6 +35,7 @@ const state = {
   mapInited: false,
   mapFilterRoutes: [],
   mapActiveRoutes: new Set(),
+  mapShowAll: false,
   mapAllRoutes: [],
   mapBusData: [],
   mapShapeData: [],
@@ -383,7 +384,7 @@ async function onRouteSelect() {
   el('btn-show-timetable').textContent = '📅 查看固定時刻表';
   refreshFavToggleLabel();
 
-  const data = await api(`/api/route_stops?route=${encodeURIComponent(route)}`);
+  const data = await api(`/api/route_stops?route=${encodeURIComponent(route)}&direction=${encodeURIComponent(state.dirToggle)}`);
   loadRecent();
   if (!data.stops || data.stops.length === 0) {
     el('route-hint').textContent = `⚠️ 無法載入【${route}】站點。`;
@@ -421,6 +422,25 @@ function setDirection(dir) {
   state.dirToggle = dir;
   el('btn-dir0').classList.toggle('active', dir === '去程');
   el('btn-dir1').classList.toggle('active', dir === '回程');
+  reloadStopSelectorsForDirection();
+}
+
+async function reloadStopSelectorsForDirection() {
+  // 去程／回程的完整站序清單常常不一樣（單行道、繞道路段），切換方向時要重新載入
+  // 等候站／目的地下拉選單，不然選單裡還是舊方向的站名，跟即時動態兜不起來，
+  // 容易讓「等候站」高亮跟到站時間對不上，甚至查出一堆看起來不合理的空白結果。
+  if (!state.routeChoice) return;
+  const prevStart = el('start-select').value;
+  const prevEnd = el('end-select').value;
+  const data = await api(`/api/route_stops?route=${encodeURIComponent(state.routeChoice)}&direction=${encodeURIComponent(state.dirToggle)}`);
+  if (data.stops && data.stops.length) {
+    const startSel = el('start-select');
+    const endSel = el('end-select');
+    startSel.innerHTML = data.stops.map(s => `<option value="${esc(s)}">${esc(s)}</option>`).join('');
+    endSel.innerHTML = data.stops.map(s => `<option value="${esc(s)}">${esc(s)}</option>`).join('');
+    startSel.value = data.stops.includes(prevStart) ? prevStart : data.stops[0];
+    endSel.value = data.stops.includes(prevEnd) ? prevEnd : data.stops[data.stops.length - 1];
+  }
   loadRouteStatus();
 }
 
@@ -772,7 +792,12 @@ async function sendChat() {
 
 // ── 地圖頁面 ─────────────────────────────────────────────
 function initMapPageIfNeeded() {
-  if (state.mapInited) { loadMapData(false); return; }
+  if (state.mapInited) {
+    // 重新切回地圖頁：只重新整理『目前已經選取的路線』（或什麼都沒選就維持空白），
+    // 不會又整批重新抓一次全部路線的資料。
+    if (state.mapShowAll || el('map-route-input').value.trim()) loadMapData(true);
+    return;
+  }
   state.mapInited = true;
   state.leafletMap = L.map('leaflet-map', { zoomControl: true, preferCanvas: true }).setView([22.9997, 120.2270], 13);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -783,10 +808,10 @@ function initMapPageIfNeeded() {
   state.busLayer = L.layerGroup().addTo(state.leafletMap);
   state.userLocationLayer = L.layerGroup().addTo(state.leafletMap);
   state.leafletMap.on('zoomend', updateStopLabelVisibility);
-  // 「已儲存路線」清單先用一支很輕量的 API 立刻列出來，不用等整張地圖（公車＋路線＋站牌）
-  // 全部抓完才顯示，使用者一打開地圖頁馬上就看得到已經存過檔的路線。
-  loadSavedRoutesOnly();
-  loadMapData(false);
+  // 一開地圖頁只先載入「路線名稱清單」（很輕量，不會查即時公車／軌跡／站牌），
+  // 讓路線選單馬上看得到；實際的公車動態／軌跡／站牌，改成只有使用者按下
+  // 「全部路線」或勾選特定路線時才去抓，不會一打開地圖頁就把全台南路線整個抓一遍。
+  loadMapRouteList();
 }
 
 // 定位使用者目前的位置，畫一個藍點＋精準度圓圈標示在地圖上，並飛過去該位置。
@@ -821,14 +846,28 @@ function locateMeOnMap() {
   }, { enableHighAccuracy: true, timeout: 10000 });
 }
 
-// 只拉「已儲存路線」清單（不含地圖上的公車/路線/站牌），一開地圖頁就先顯示出來。
-async function loadSavedRoutesOnly() {
+// 一開地圖頁先只拉「全部已知路線的名稱清單」＋「已儲存路線」，完全不查即時公車／軌跡／
+// 站牌（很輕量），讓路線選單馬上看得到；地圖本身保持空白，等使用者按「全部路線」
+// 或勾選特定路線才去抓真正的地圖資料。
+async function loadMapRouteList(resetSelection = true) {
+  const stats = el('map-panel-stats');
+  if (resetSelection) stats.textContent = '載入路線清單中...';
   try {
-    const data = await api('/api/saved_routes');
-    state.savedRoutes = data.routes || [];
+    const data = await api('/api/map_route_list');
+    state.mapAllRoutes = data.routes || [];
+    state.savedRoutes = data.saved_routes || [];
+    if (resetSelection) {
+      state.mapBusData = [];
+      state.mapShapeData = [];
+      state.mapStopData = [];
+      state.mapActiveRoutes = new Set();
+      state.mapShowAll = false;
+      drawMapShapes(); drawMapStops(); drawMapBuses();
+      stats.textContent = '請點選路線，或按下方「全部路線」載入公車動態與軌跡';
+    }
     renderMapPanel(el('map-search-box').value.trim());
   } catch (e) {
-    // 忽略，等下面完整的 loadMapData() 回來一樣會補上
+    if (resetSelection) stats.textContent = '路線清單載入失敗';
   }
 }
 
@@ -850,8 +889,12 @@ async function saveRouteCoords() {
     statusBox.innerHTML =
       `✅ 已儲存<br>路線軌跡：${data.shape_ok ? `${data.shape_segments} 段` : '❌ 抓取失敗'} → ${esc(data.shape_file)}<br>` +
       `站牌清單：${data.stop_ok ? `${data.stop_count} 站` : '❌ 抓取失敗'} → ${esc(data.stop_file)}`;
-    // 存檔成功後立即重新整理地圖資料，讓底下的「已儲存路線」清單馬上出現這條新路線
-    if (data.shape_ok || data.stop_ok) await loadMapData(true);
+    // 存檔成功後重新整理一次「路線清單」，讓底下的清單馬上出現這條新路線（💾 標記）；
+    // 不直接整批重新抓地圖資料，除非使用者本來就已經選了「全部路線」或其他特定路線。
+    if (data.shape_ok || data.stop_ok) {
+      await loadMapRouteList(false);
+      if (state.mapShowAll || el('map-route-input').value.trim()) await loadMapData(true);
+    }
   } catch (e) {
     let html = `❌ ${esc(e.message)}`;
     const suggestions = e.data && e.data.suggestions;
@@ -904,6 +947,13 @@ async function lookupRouteName(routeText) {
 async function loadMapData(forceRefresh) {
   const inputVal = el('map-route-input').value.trim();
   const stats = el('map-panel-stats');
+  // 沒有輸入特定路線、也還沒按過「全部路線」的話，不要打去後端抓「全部路線」的重資料
+  // （公車動態＋軌跡＋站牌一次抓全台南所有路線很吃 TDX 額度），維持空白地圖就好，
+  // 一定要使用者明確選了東西（打字篩選、勾路線、或按「全部路線」）才真的去抓。
+  if (!inputVal && !state.mapShowAll) {
+    stats.textContent = '請點選路線，或按下方「全部路線」載入公車動態與軌跡';
+    return;
+  }
   stats.textContent = '載入中...';
   const params = inputVal ? `?routes=${encodeURIComponent(inputVal)}` : '';
   try {
@@ -911,9 +961,8 @@ async function loadMapData(forceRefresh) {
     state.mapBusData = data.buses;
     state.mapShapeData = data.shapes;
     state.mapStopData = data.stops || [];
-    state.mapAllRoutes = data.routes;
     state.savedRoutes = data.saved_routes || [];
-    state.mapActiveRoutes = new Set(data.routes); // 預設全部顯示
+    state.mapActiveRoutes = new Set(data.routes); // 這次實際抓到、畫出來的路線
     el('map-caption').textContent = `資料時間：${data.now}　｜　每次按「🔄 更新」重抓最新位置`;
     drawMapShapes();
     drawMapStops();
@@ -1088,13 +1137,25 @@ function renderMapPanel(filterText) {
   const cnt = countByRoute();
 
   const allItem = document.createElement('div');
-  const allActive = state.mapActiveRoutes.size === state.mapAllRoutes.length;
+  const allActive = state.mapShowAll;
   allItem.className = 'route-item' + (allActive ? ' active' : '');
   allItem.innerHTML = `<div class="route-dot" style="background:#fff;"></div><span>全部路線</span><span class="route-count">${state.mapAllRoutes.length}</span>`;
   allItem.onclick = () => {
-    if (state.mapActiveRoutes.size === state.mapAllRoutes.length) state.mapActiveRoutes.clear();
-    else state.mapAllRoutes.forEach(r => state.mapActiveRoutes.add(r));
-    renderMapPanel(filterText); drawMapShapes(); drawMapStops(); drawMapBuses();
+    if (state.mapShowAll) {
+      // 再點一次「全部路線」＝取消，清空地圖，不用重新打後端
+      state.mapShowAll = false;
+      state.mapActiveRoutes = new Set();
+      state.mapBusData = []; state.mapShapeData = []; state.mapStopData = [];
+      el('map-route-input').value = '';
+      drawMapShapes(); drawMapStops(); drawMapBuses();
+      renderMapPanel(filterText);
+      el('map-panel-stats').textContent = '請點選路線，或按下方「全部路線」載入公車動態與軌跡';
+    } else {
+      // 使用者明確按下「全部路線」，這時候才真的去後端抓全台南所有路線的資料
+      state.mapShowAll = true;
+      el('map-route-input').value = '';
+      loadMapData(true);
+    }
   };
   list.appendChild(allItem);
 
@@ -1108,9 +1169,21 @@ function renderMapPanel(filterText) {
     item.title = isSaved ? '已儲存路線原始資料（Shape＋StopOfRoute）' : '';
     item.innerHTML = `<div class="route-dot" style="background:${color};"></div><span>${esc(route)}</span><span class="route-count">${n}</span>`;
     item.onclick = () => {
+      // 勾選／取消個別路線：只抓使用者實際選取的這幾條路線，不會連帶把其他路線也一起抓，
+      // 也不再把「全部路線」的狀態一起打開。
+      state.mapShowAll = false;
       if (state.mapActiveRoutes.has(route)) state.mapActiveRoutes.delete(route);
       else state.mapActiveRoutes.add(route);
-      drawMapShapes(); drawMapStops(); drawMapBuses(); renderMapPanel(filterText);
+      if (state.mapActiveRoutes.size === 0) {
+        state.mapBusData = []; state.mapShapeData = []; state.mapStopData = [];
+        el('map-route-input').value = '';
+        drawMapShapes(); drawMapStops(); drawMapBuses();
+        renderMapPanel(filterText);
+        el('map-panel-stats').textContent = '請點選路線，或按下方「全部路線」載入公車動態與軌跡';
+      } else {
+        el('map-route-input').value = [...state.mapActiveRoutes].join(', ');
+        loadMapData(true);
+      }
     };
     list.appendChild(item);
   });
@@ -1128,6 +1201,7 @@ function renderMapPanel(filterText) {
     item.onclick = () => {
       // 用「加入」而不是「取代」：把這條路線併進目前查詢欄的清單，
       // 這樣才能一次累加選取多條路線一起顯示，不會每點一條就把前面選的路線洗掉。
+      state.mapShowAll = false;
       const inp = el('map-route-input');
       const existing = inp.value.split(/[,，]/).map(s => s.trim()).filter(Boolean);
       if (!existing.includes(route)) existing.push(route);
