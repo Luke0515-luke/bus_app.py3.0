@@ -1462,6 +1462,20 @@ def api_map_data():
     })
 
 
+@app.route('/api/map_route_list')
+def api_map_route_list():
+    """輕量版：只回傳『全部已知路線』的名稱清單＋已存檔清單，完全不去查即時公車動態、
+    軌跡、站牌。地圖頁面一打開只需要這份輕量資料就能先畫出路線選單，不用像以前那樣
+    一進地圖頁就把全台南所有路線（含公車位置、軌跡、站牌）整個抓一遍——那樣很吃 TDX
+    的查詢額度、也會拖慢開頁速度。改成只有使用者真的按下「全部路線」或勾選特定路線時，
+    才去抓那些路線實際的地圖資料（見 /api/map_data）。"""
+    all_routes = get_all_known_routes()
+    return jsonify({
+        "routes": all_routes,
+        "saved_routes": sorted(get_saved_route_names()),
+    })
+
+
 @app.route('/api/saved_routes')
 def api_saved_routes():
     """列出目前 /opt/render/project/data/route 底下實際已經存檔（Shape 或 StopOfRoute）
