@@ -558,6 +558,27 @@ def fetch_route_stops(route_name):
     return []
 
 
+def fetch_route_stops_by_direction(route_name, direction):
+    """回傳某路線『指定方向』（去程=0／回程=1）的完整站序清單。
+    跟 fetch_route_stops 不同：那支函式不管方向一律回傳 data[0]（TDX 通常把去程放在第一筆，
+    但不保證每條路線都這樣）。如果查的是回程，卻拿去程的站序去跟『只過濾回程』的即時動態
+    （EstimatedTimeOfArrival）逐站比對站名，兩邊站序、站名很多都對不上，會讓回程幾乎每一站
+    都比對失敗、被誤判成『尚未發車』——這是『查詢常常顯示尚未發車，但實際上有車』的主因之一，
+    所以查即時動態時一定要用這支，確保站序清單跟過濾出來的方向一致。"""
+    data = load_route_stop_data(route_name)
+    try:
+        if data:
+            for entry in data:
+                if entry.get("Direction", 0) == direction:
+                    return [s['StopName']['Zh_tw'] for s in entry.get('Stops', [])]
+            # 少數路線的存檔資料裡找不到完全符合的方向，退回用第一筆，
+            # 至少還能顯示站名，總比整條路線直接顯示「無法載入站點」好
+            return [s['StopName']['Zh_tw'] for s in data[0]['Stops']]
+    except Exception:
+        pass
+    return []
+
+
 @cached(30)
 def fetch_bus_data(route_name):
     url = f"https://tdx.transportdata.tw/api/basic/v2/Bus/EstimatedTimeOfArrival/City/Tainan/{route_name}?%24format=JSON"
@@ -1075,9 +1096,13 @@ def api_filter_routes():
 @app.route('/api/route_stops')
 def api_route_stops():
     route = request.args.get('route', '')
+    direction_label = request.args.get('direction', '')
     if not route:
         return jsonify({"stops": []})
-    stops = fetch_route_stops(route)
+    if direction_label in ('去程', '回程'):
+        stops = fetch_route_stops_by_direction(route, 0 if direction_label == '去程' else 1)
+    else:
+        stops = fetch_route_stops(route)
     state = get_state()
     add_recent_route(state, route)
     return jsonify({"stops": stops})
@@ -1108,26 +1133,17 @@ def api_route_status():
     active_list = dir0 if direction == "去程" else dir1
     target_dir = 0 if direction == "去程" else 1
 
-    # 站點座標
+    # 站點座標：改用跟站牌／地圖同一套「查一次、長期存檔」的資料來源，不要每次查即時動態
+    # 都額外發一支獨立、沒有快取也沒有重試的即時 TDX 請求。原本那支請求只要剛好逾時或
+    # TDX 忙線失敗，stop_coord_map 就會整個變空字典，GPS 定位備援（判斷『站上有車』）
+    # 就會整組悄悄失效，這也是『明明有車在跑卻常常顯示尚未發車』的另一個主因。
     stop_coord_map = {}
-    try:
-        cr = requests.get(
-            f"https://tdx.transportdata.tw/api/basic/v2/Bus/StopOfRoute/City/Tainan/{route}?%24format=JSON",
-            headers=tdx_headers(), timeout=8)
-        if cr.status_code == 200:
-            for rd in cr.json():
-                if rd.get("Direction") == target_dir:
-                    for s in rd.get("Stops", []):
-                        name = s.get("StopName", {}).get("Zh_tw", "")
-                        pos = s.get("StopPosition", {})
-                        if name and pos.get("PositionLat"):
-                            stop_coord_map[name] = (pos["PositionLat"], pos["PositionLon"])
-    except Exception:
-        pass
+    for sp in fetch_route_stop_positions(route):
+        stop_coord_map[sp["name"]] = (sp["lat"], sp["lon"])
 
     ub_stations, ub_avail = fetch_ubike_all()
     realtime_map = {item.get("StopName", {}).get("Zh_tw", ""): item for item in active_list}
-    all_stops_raw = fetch_route_stops(route)
+    all_stops_raw = fetch_route_stops_by_direction(route, target_dir)
     full_stop_list = all_stops_raw or [item.get("StopName", {}).get("Zh_tw", "") for item in active_list]
 
     if not full_stop_list:
