@@ -248,7 +248,8 @@ def _invalidate_route_cache(route_name):
     讓下一次查詢立即讀到剛存好的檔案。"""
     for fn in ("fetch_route_stops", "fetch_route_shape", "fetch_route_stop_positions", "fetch_route_schedule"):
         _cache_store.pop(f"{fn}:({route_name!r},):{{}}", None)
-    _cache_store.pop("build_stop_route_index:():{}", None)
+    _stop_route_index_cache["data"] = None
+    _stop_route_index_cache["time"] = 0
 
 
 _cleanup_known_bad_route_files()
@@ -746,22 +747,43 @@ def _fetch_all_route_stops_parallel(routes):
     return result
 
 
-@cached(3600)
+_stop_route_index_cache = {"data": None, "time": 0}
+
+
 def build_stop_route_index():
     """建立「站名 → 可搭乘路線」索引，供進階查詢（站到站）使用。
     這裡刻意跟即時地圖用同一份路線清單（get_all_known_routes，系統設定的路線 ∪
     地圖頁「已儲存路線」），不是只看系統設定的固定清單，才不會漏掉只在地圖那邊
     存過站牌資料的路線（例如小黃公車、自訂儲存的路線）。
     不依賴手動按「系統維護」：自動走遍全部路線，data/route 裡有存檔的直接用，
-    沒有的即時查詢並自動存檔（存到 /opt/render/project/data/route，會被排程備份）。"""
+    沒有的即時查詢並自動存檔（存到 /opt/render/project/data/route，會被排程備份）。
+
+    這裡刻意不用一般的 @cached(3600)：那樣會把「這次剛好一堆路線來不及查到
+    （TDX 暫時卡住、或伺服器剛啟動還沒把全部路線都存過檔）」的不完整結果直接
+    快取一整個小時，導致『進階查詢很多站不在清單裡』要卡一小時才會自己恢復。
+    改成只有在幾乎所有路線都成功查到站牌時，才把結果快取住；查詢不完整的話
+    直接回傳這次盡量湊到的結果，但不快取，讓下一次請求可以重新補齊缺漏的路線。"""
+    now = time.time()
+    cached_entry = _stop_route_index_cache["data"]
+    if cached_entry is not None and now - _stop_route_index_cache["time"] < 3600:
+        return cached_entry
+
+    all_routes = get_all_known_routes()
+    stops_map = _fetch_all_route_stops_parallel(all_routes)
     index = {}
-    stops_map = _fetch_all_route_stops_parallel(get_all_known_routes())
     for route_name, stops in stops_map.items():
         for stop in stops:
             if stop not in index:
                 index[stop] = []
             if route_name not in index[stop]:
                 index[stop].append(route_name)
+
+    missing = [r for r, s in stops_map.items() if not s]
+    if all_routes and len(missing) <= max(3, len(all_routes) * 0.05):
+        _stop_route_index_cache["data"] = index
+        _stop_route_index_cache["time"] = now
+    elif missing:
+        print(f"⚠️ 進階查詢站名索引尚未完整（{len(missing)} 條路線暫時查不到站牌），本次結果先不快取。")
     return index
 
 
@@ -860,6 +882,23 @@ def eta_status_text(eta, status):
 _WEEKDAY_KEYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 
 
+def _timetable_departure_time(t):
+    """從一筆 Timetables（一個班次）取得這班車實際的發車時間。
+    TDX 的 Bus/Schedule 資料結構裡，Timetables 物件本身並沒有 DepartureTime 欄位；
+    真正的發車時間是藏在 StopTimes 裡「站序（StopSequence）為 1」那一站的 DepartureTime
+    （官方文件：取 Timetables 裡每個 Trip 的 StopTimes，找 StopSequence=1 的離站時間，
+    即為該班車的發車時間）。之前直接取 t.get('DepartureTime') 一定拿到空字串，
+    導致時刻表畫面上每個時間格都是空的。"""
+    stop_times = t.get("StopTimes") or []
+    if stop_times:
+        first = min(stop_times, key=lambda s: s.get("StopSequence", 999))
+        dt = first.get("DepartureTime") or first.get("ArrivalTime") or ""
+        if dt:
+            return dt
+    # 保險：萬一哪天 TDX 格式又改了、真的有頂層 DepartureTime，還是讀得到
+    return t.get("DepartureTime", "")
+
+
 def _schedule_departure_times(route, direction):
     """回傳某路線／方向，「今天」（依星期幾比對服務日曆）所有固定班次的發車時間
     （today 的 datetime 物件）。沒有固定時刻表資料就回傳空 list。
@@ -878,7 +917,7 @@ def _schedule_departure_times(route, direction):
             # 有 ServiceDay 資訊的話要符合今天星期幾；完全沒標示服務日曆的視為每天都有發車
             if svc and not svc.get(weekday_key, False):
                 continue
-            dep_str = t.get("DepartureTime", "")
+            dep_str = _timetable_departure_time(t)
             if not dep_str:
                 continue
             try:
@@ -1456,7 +1495,10 @@ def api_timetable():
                     if svc.get(k):
                         label_bits.append(zh)
                 label = "、".join(label_bits) if label_bits else "每日"
-                groups.setdefault(label, []).append(t.get("DepartureTime", ""))
+                dep_str = _timetable_departure_time(t)
+                if not dep_str:
+                    continue
+                groups.setdefault(label, []).append(dep_str)
             for label, times in groups.items():
                 times.sort()
             directions.append({
