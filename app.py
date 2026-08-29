@@ -43,11 +43,8 @@ if Groq and groq_api_key:
     try:
         client = Groq(api_key=groq_api_key)
         completion = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",  # 可依需求替換模型
-            messages=[{"role": "user", "content": "你的提示詞或使用者輸入"}],
             temperature=0.2,  # 可調整創造性（0 到 1 之間）
-            max_tokens=1024,
-            )
+        )
     except Exception:
         client = None
         print("找不到 GROQ_API_KEY，AI 功能將受限。")
