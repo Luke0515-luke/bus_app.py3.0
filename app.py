@@ -277,27 +277,17 @@ def _bus_api_city_segment(route_name):
 
 def _fetch_route_endpoint_json(api_name, route_name, timeout=10, retries=1):
     """向 TDX 查某個公車端點（StopOfRoute／Shape／Schedule…）＋某路線的原始資料，並做過濾。
-    先照路線分類判斷的路徑（市區公車走 City/Tainan，觀光的台灣好行路線走 InterCity）去查；
-    如果查回來是空的，代表分類判斷可能猜錯了，再自動改試另一種路徑一次，
-    這樣即使分類表未來加了新路線、一時判斷錯誤，也不會整條線直接查不到資料。"""
-    primary_segment = _bus_api_city_segment(route_name)
-    segments_to_try = [primary_segment]
-    fallback_segment = "City/Tainan" if primary_segment == "InterCity" else "InterCity"
-    segments_to_try.append(fallback_segment)
-
-    for segment in segments_to_try:
-        url = f"https://tdx.transportdata.tw/api/basic/v2/Bus/{api_name}/{segment}/{route_name}?%24format=JSON"
-        res = tdx_get(url, timeout=timeout, retries=retries)
-        if res is None:
-            continue
-        try:
-            data = res.json()
-        except Exception:
-            continue
-        data = _filter_route_entries(data, route_name)
-        if data:
-            return data
-    return None
+    依路線分類判斷的路徑去查一次：市區公車走 City/Tainan，觀光的台灣好行路線走 InterCity。"""
+    segment = _bus_api_city_segment(route_name)
+    url = f"https://tdx.transportdata.tw/api/basic/v2/Bus/{api_name}/{segment}/{route_name}?%24format=JSON"
+    res = tdx_get(url, timeout=timeout, retries=retries)
+    if res is None:
+        return None
+    try:
+        data = res.json()
+    except Exception:
+        return None
+    return _filter_route_entries(data, route_name)
 
 async def backup():
         try:
@@ -598,18 +588,14 @@ def fetch_route_stops_by_direction(route_name, direction):
 
 @cached(30)
 def fetch_bus_data(route_name):
-    primary_segment = _bus_api_city_segment(route_name)
-    fallback_segment = "City/Tainan" if primary_segment == "InterCity" else "InterCity"
-    for segment in (primary_segment, fallback_segment):
-        url = f"https://tdx.transportdata.tw/api/basic/v2/Bus/EstimatedTimeOfArrival/{segment}/{route_name}?%24format=JSON"
-        try:
-            res = requests.get(url, headers=tdx_headers(), timeout=10)
-            if res.status_code == 200:
-                data = res.json()
-                if data:
-                    return data
-        except Exception:
-            pass
+    segment = _bus_api_city_segment(route_name)
+    url = f"https://tdx.transportdata.tw/api/basic/v2/Bus/EstimatedTimeOfArrival/{segment}/{route_name}?%24format=JSON"
+    try:
+        res = requests.get(url, headers=tdx_headers(), timeout=10)
+        if res.status_code == 200:
+            return res.json()
+    except Exception:
+        pass
     return None
 
 
@@ -730,19 +716,8 @@ def fetch_shapes_and_stops_parallel(routes):
 
 def fetch_bus_realtime_positions(route_name=None):
     if route_name:
-        primary_segment = _bus_api_city_segment(route_name)
-        fallback_segment = "City/Tainan" if primary_segment == "InterCity" else "InterCity"
-        for segment in (primary_segment, fallback_segment):
-            url = f"https://tdx.transportdata.tw/api/basic/v2/Bus/RealTimeByFrequency/{segment}/{route_name}?%24format=JSON"
-            try:
-                res = requests.get(url, headers=tdx_headers(), timeout=10)
-                if res.status_code == 200:
-                    data = res.json()
-                    if data:
-                        return data
-            except Exception:
-                pass
-        return []
+        segment = _bus_api_city_segment(route_name)
+        url = f"https://tdx.transportdata.tw/api/basic/v2/Bus/RealTimeByFrequency/{segment}/{route_name}?%24format=JSON"
     else:
         url = "https://tdx.transportdata.tw/api/basic/v2/Bus/RealTimeByFrequency/City/Tainan?%24format=JSON"
     try:
