@@ -50,7 +50,7 @@ else:
 
 AUTH_URL = "https://tdx.transportdata.tw/auth/realms/TDXConnect/protocol/openid-connect/token"
 TAINAN_LAT, TAINAN_LON = 22.9997, 120.2270
-UBIKE_SPEED_KMH = 15  # 估算騎車速度（OSRM 失敗時備用）
+UBIKE_MIN_PER_KM = 10  # 使用者指定：騎 UBike 的時間概估用「1 公里約 10 分鐘」計算
 # 路線原始資料（站牌 StopOfRoute ＋ 軌跡 Shape）的正式儲存位置。
 # 這個資料夾在 /opt/render/project/data 底下，會被排程每 10 分鐘備份到 GitHub 的
 # backup 分支，即使 Render 重啟、清空硬碟，資料也不會不見——不再使用會消失在
@@ -128,7 +128,15 @@ def _filter_route_entries(data, route_name):
 
 def _fetch_and_save_stop_data(route_name):
     """即時向 TDX 查詢某路線的 StopOfRoute 原始資料，驗證路線名稱後才存檔。"""
-    data = _fetch_route_endpoint_json("StopOfRoute", route_name, timeout=10, retries=1)
+    url = f"https://tdx.transportdata.tw/api/basic/v2/Bus/StopOfRoute/City/Tainan/{route_name}?%24format=JSON"
+    res = tdx_get(url, timeout=10, retries=1)
+    if res is None:
+        return None
+    try:
+        data = res.json()
+    except Exception:
+        return None
+    data = _filter_route_entries(data, route_name)
     if data:
         _save_route_json(_route_stop_file_path(route_name), data)
     return data
@@ -136,7 +144,15 @@ def _fetch_and_save_stop_data(route_name):
 
 def _fetch_and_save_shape_data(route_name):
     """即時向 TDX 查詢某路線的 Shape 原始資料，驗證路線名稱後才存檔。"""
-    data = _fetch_route_endpoint_json("Shape", route_name, timeout=10, retries=1)
+    url = f"https://tdx.transportdata.tw/api/basic/v2/Bus/Shape/City/Tainan/{route_name}?%24format=JSON"
+    res = tdx_get(url, timeout=10, retries=1)
+    if res is None:
+        return None
+    try:
+        data = res.json()
+    except Exception:
+        return None
+    data = _filter_route_entries(data, route_name)
     if data:
         _save_route_json(_route_shape_file_path(route_name), data)
     return data
@@ -146,7 +162,15 @@ def _fetch_and_save_timetable_data(route_name):
     """即時向 TDX 查詢某路線的固定時刻表（Bus/Schedule）原始資料，驗證路線名稱後才存檔。
     跟站牌／軌跡走同一套「查一次、之後都吃檔案」的邏輯，避免每次打開時刻表都要
     重新等 TDX 回應（TDX 這支端點常常比較慢，手機在訊號不穩時容易直接 fetch 失敗）。"""
-    data = _fetch_route_endpoint_json("Schedule", route_name, timeout=15, retries=1)
+    url = f"https://tdx.transportdata.tw/api/basic/v2/Bus/Schedule/City/Tainan/{route_name}?%24format=JSON"
+    res = tdx_get(url, timeout=15, retries=1)
+    if res is None:
+        return None
+    try:
+        data = res.json()
+    except Exception:
+        return None
+    data = _filter_route_entries(data, route_name)
     if data:
         _save_route_json(_route_timetable_file_path(route_name), data)
     return data
@@ -238,9 +262,9 @@ ROUTE_CATEGORIES = {
     "橘線": ["橘幹線", "橘1", "橘2", "橘3", "橘4", "橘4-1", "橘5", "橘6", "橘9", "橘9-1", "橘10", "橘10-1", "橘11", "橘11-1", "橘12", "橘13", "橘14", "橘20"],
     "藍線": ["藍幹線", "藍1", "藍2", "藍3", "藍4", "藍10", "藍11", "藍13", "藍14", "藍15", "藍20", "藍21", "藍22", "藍23", "藍24", "藍25", "藍26", "藍27", "藍28", "藍29", "藍30"],
     "紅線": ["紅幹線", "紅1", "紅2", "紅3", "紅4", "紅10", "紅11", "紅12", "紅13", "紅14"],
-    "市區": ["0左", "0右", "6", "7", "9", "10", "11", "14", "15", "18", "19", "20", "21", "31", "32", "62", "70左", "70右", "77", "98", "101", "102", "103", "107", "111", "901", "902", "904", "905"],
+    "市區": ["0左", "0右", "6", "7", "9", "10", "11", "14", "15", "18", "19", "20", "21", "31", "32", "33", "62", "70左", "70右", "77", "98", "101", "102", "103", "107", "111", "168", "901", "902", "904", "905"],
     "高鐵快捷": ["H31"],
-    "觀光": ["東山咖啡線", "梅嶺線", "菱波官田線", "雙層巴士", "33 關子嶺線", "168 虎埤老街線"]
+    "觀光": ["東山咖啡線", "梅嶺線", "菱波官田線", "雙層巴士"]
 }
 
 ROUTE_COLOR_MAP = {
@@ -250,44 +274,13 @@ ROUTE_COLOR_MAP = {
     "6": "#E91E63", "7": "#E91E63", "9": "#E91E63",
     "10": "#FF5722", "11": "#FF5722", "14": "#FF5722", "15": "#FF5722",
     "18": "#FF9800", "19": "#FF9800", "20": "#FF9800", "21": "#FF9800",
-    "31": "#795548", "32": "#795548", "33 關子嶺線": "#795548",
+    "31": "#795548", "32": "#795548", "33": "#795548",
     "62": "#607D8B", "70": "#3F51B5", "77": "#009688", "98": "#F44336",
     "101": "#673AB7", "102": "#673AB7", "103": "#673AB7", "107": "#673AB7",
-    "111": "#00BCD4", "168 虎埤老街線": "#00BCD4",
+    "111": "#00BCD4", "168": "#00BCD4",
     "901": "#8BC34A", "902": "#8BC34A", "904": "#8BC34A", "905": "#8BC34A",
     "東山": "#FF6F00", "梅嶺": "#AD1457", "菱波": "#00838F", "雙層": "#BF360C",
 }
-
-# 「觀光」分類（東山咖啡線、梅嶺線、菱波官田線、雙層巴士、33 關子嶺線、168 虎埤老街線……）
-# 在 TDX 上其實是登記在「公路客運／台灣好行（InterCity）」底下，不是市區公車，
-# 路徑要用 .../InterCity/{route_name}，不能用 .../City/Tainan/{route_name}，
-# 用錯路徑會讓這幾條路線不管怎麼查都查不到任何站牌／軌跡／時刻表資料。
-INTERCITY_SIGHTSEEING_ROUTES = set(ROUTE_CATEGORIES.get("觀光", []))
-
-
-def _is_intercity_route(route_name):
-    """判斷這條路線在 TDX 上是否屬於公路客運（InterCity），而不是市區公車。"""
-    return route_name in INTERCITY_SIGHTSEEING_ROUTES
-
-
-def _bus_api_city_segment(route_name):
-    """回傳這條路線在 TDX 公車 API 網址裡『City/縣市』或『InterCity』那一段路徑。"""
-    return "InterCity" if _is_intercity_route(route_name) else "City/Tainan"
-
-
-def _fetch_route_endpoint_json(api_name, route_name, timeout=10, retries=1):
-    """向 TDX 查某個公車端點（StopOfRoute／Shape／Schedule…）＋某路線的原始資料，並做過濾。
-    依路線分類判斷的路徑去查一次：市區公車走 City/Tainan，觀光的台灣好行路線走 InterCity。"""
-    segment = _bus_api_city_segment(route_name)
-    url = f"https://tdx.transportdata.tw/api/basic/v2/Bus/{api_name}/{segment}/{route_name}?%24format=JSON"
-    res = tdx_get(url, timeout=timeout, retries=retries)
-    if res is None:
-        return None
-    try:
-        data = res.json()
-    except Exception:
-        return None
-    return _filter_route_entries(data, route_name)
 
 async def backup():
         try:
@@ -473,17 +466,21 @@ def get_route_color(route_name):
     return "#7F8C8D"
 
 
-def get_osrm_travel_time(start_lat, start_lon, end_lat, end_lon, mode="bike"):
+def get_osrm_bike_distance(start_lat, start_lon, end_lat, end_lon):
+    """量測騎 UBike 的實際路網距離（公里），優先用 OSRM 算出的道路路徑距離
+    （比直線距離準，會考慮繞路、單行道、河道等障礙），查不到才退回用直線距離概估。
+    騎乘所需時間改用使用者指定的「1 公里約 10 分鐘」固定換算，不採用 OSRM 自己估的
+    騎乘時間（那個估法通常偏樂觀，沒有考慮紅綠燈、牽車、找車柱等現實中的耗時）。"""
     try:
-        url = (f"http://router.project-osrm.org/route/v1/{mode}/"
+        url = (f"http://router.project-osrm.org/route/v1/bike/"
                f"{start_lon},{start_lat};{end_lon},{end_lat}?overview=false")
         res = requests.get(url, timeout=5)
         if res.status_code == 200:
             route = res.json()["routes"][0]
             dist_m = route["distance"]
-            dur_min = round(route["duration"] / 60)
-            dist_text = f"{round(dist_m/1000,1)} 公里" if dist_m >= 1000 else f"{round(dist_m)} 公尺"
-            return dist_text, dur_min
+            dist_km = dist_m / 1000
+            dist_text = f"{dist_km:.1f} 公里" if dist_m >= 1000 else f"{round(dist_m)} 公尺"
+            return dist_km, dist_text
     except Exception:
         pass
     return None, None
@@ -588,8 +585,7 @@ def fetch_route_stops_by_direction(route_name, direction):
 
 @cached(30)
 def fetch_bus_data(route_name):
-    segment = _bus_api_city_segment(route_name)
-    url = f"https://tdx.transportdata.tw/api/basic/v2/Bus/EstimatedTimeOfArrival/{segment}/{route_name}?%24format=JSON"
+    url = f"https://tdx.transportdata.tw/api/basic/v2/Bus/EstimatedTimeOfArrival/City/Tainan/{route_name}?%24format=JSON"
     try:
         res = requests.get(url, headers=tdx_headers(), timeout=10)
         if res.status_code == 200:
@@ -716,8 +712,7 @@ def fetch_shapes_and_stops_parallel(routes):
 
 def fetch_bus_realtime_positions(route_name=None):
     if route_name:
-        segment = _bus_api_city_segment(route_name)
-        url = f"https://tdx.transportdata.tw/api/basic/v2/Bus/RealTimeByFrequency/{segment}/{route_name}?%24format=JSON"
+        url = f"https://tdx.transportdata.tw/api/basic/v2/Bus/RealTimeByFrequency/City/Tainan/{route_name}?%24format=JSON"
     else:
         url = "https://tdx.transportdata.tw/api/basic/v2/Bus/RealTimeByFrequency/City/Tainan?%24format=JSON"
     try:
@@ -788,14 +783,19 @@ def build_stop_route_index():
     不依賴手動按「系統維護」：自動走遍全部路線，data/route 裡有存檔的直接用，
     沒有的即時查詢並自動存檔（存到 /opt/render/project/data/route，會被排程備份）。
 
-    這裡刻意不用一般的 @cached(3600)：那樣會把「這次剛好一堆路線來不及查到
-    （TDX 暫時卡住、或伺服器剛啟動還沒把全部路線都存過檔）」的不完整結果直接
-    快取一整個小時，導致『進階查詢很多站不在清單裡』要卡一小時才會自己恢復。
-    改成只有在幾乎所有路線都成功查到站牌時，才把結果快取住；查詢不完整的話
-    直接回傳這次盡量湊到的結果，但不快取，讓下一次請求可以重新補齊缺漏的路線。"""
+    這裡刻意不用一般的 @cached(3600)，改用下面這個自訂的小快取，是因為兩種極端都要避免：
+    1) 完全不快取／每次都要求全部路線都成功才快取 → 只要固定有少數幾條路線持續查不到
+       （例如剛好那幾條路線名稱在 TDX 對不起來），就永遠達不到「幾乎全部成功」的門檻，
+       導致「進階查詢」每次都要重新對 150 幾條路線發送查詢，在請求逾時內做不完，
+       反而讓整個站名清單直接查不到、車站全部不見。
+    2) 完整或不完整都用同一個長 TTL（例如 1 小時）→ 一旦剛好在系統剛啟動、還有很多路線
+       沒存過檔的情況下查詢，那次不完整的結果會卡住一整個小時都不會自動補齊。
+    所以無論這次結果完不完整都「先快取住」，讓查詢至少能馬上有結果可用；
+    只是完整的話快取久一點（1 小時），不完整的話快取短一點（2 分鐘）盡快自動重新嘗試補齊。"""
     now = time.time()
     cached_entry = _stop_route_index_cache["data"]
-    if cached_entry is not None and now - _stop_route_index_cache["time"] < 3600:
+    ttl = _stop_route_index_cache.get("ttl", 3600)
+    if cached_entry is not None and now - _stop_route_index_cache["time"] < ttl:
         return cached_entry
 
     all_routes = get_all_known_routes()
@@ -809,11 +809,13 @@ def build_stop_route_index():
                 index[stop].append(route_name)
 
     missing = [r for r, s in stops_map.items() if not s]
-    if all_routes and len(missing) <= max(3, len(all_routes) * 0.05):
-        _stop_route_index_cache["data"] = index
-        _stop_route_index_cache["time"] = now
-    elif missing:
-        print(f"⚠️ 進階查詢站名索引尚未完整（{len(missing)} 條路線暫時查不到站牌），本次結果先不快取。")
+    complete = bool(all_routes) and len(missing) <= max(3, len(all_routes) * 0.05)
+    _stop_route_index_cache["data"] = index
+    _stop_route_index_cache["time"] = now
+    _stop_route_index_cache["ttl"] = 3600 if complete else 120
+    if not complete and missing:
+        print(f"⚠️ 進階查詢站名索引尚未完整（{len(missing)} 條路線暫時查不到站牌），"
+              f"先用目前查到的結果服務，2 分鐘後會自動重新嘗試補齊。")
     return index
 
 
@@ -866,11 +868,11 @@ def check_ubike_suggestion(start_st, end_st, stop_coord_map, ub_stations, ub_ava
     if not start_ub or not end_ub:
         return None
 
-    dist_text, bike_min = get_osrm_travel_time(s_lat, s_lon, e_lat, e_lon, mode="bike")
-    if bike_min is None:
+    dist_km, dist_text = get_osrm_bike_distance(s_lat, s_lon, e_lat, e_lon)
+    if dist_km is None:
         dist_km = haversine(s_lat, s_lon, e_lat, e_lon)
-        bike_min = (dist_km / UBIKE_SPEED_KMH) * 60
         dist_text = f"{dist_km:.1f} 公里（直線估算）"
+    bike_min = dist_km * UBIKE_MIN_PER_KM
 
     bus_total_min = (bus_wait_sec + bus_travel_sec) / 60
 
@@ -878,7 +880,7 @@ def check_ubike_suggestion(start_st, end_st, stop_coord_map, ub_stations, ub_ava
         best_start = start_ub[0]
         best_end = end_ub[0]
         return (
-            f"🚲 UBike 更快！實際騎車約 {bike_min} 分鐘（{dist_text}），"
+            f"🚲 UBike 更快！實際騎車約 {bike_min:.0f} 分鐘（{dist_text}），"
             f"比等公車+搭車（約 {bus_total_min:.0f} 分鐘）更省時。\n"
             f"- 起點 UBike：{best_start['name']}（可借 {best_start['available']} 輛）\n"
             f"- 終點 UBike：{best_end['name']}（可還 {best_end['empty']} 格）"
@@ -1195,7 +1197,6 @@ def api_route_status():
 
     tts_lines = [f"路線 {route}，往 {dest_0 if direction == '去程' else dest_1}方向。"]
     stops_out = []
-    ai_log_list = []
     seen_plates = set()  # 用來讓同一輛實體公車只在最接近的站顯示一次（依目前位置單一顯示）
     main_dest = dest_0 if direction == "去程" else dest_1
     # 即時動態／GPS 都查不到資料時的最後備援：用固定時刻表概估到站時間（例如「尚未發車」
@@ -1231,10 +1232,15 @@ def api_route_status():
                 plate = gps_bus.get("PlateNumb", "")
             time_text, badge_class = "進站中", "ts-red"
 
-        # 即時動態、GPS 都完全查不到資料 → 最後退回用固定時刻表概估（僅供參考），
-        # 避免像「新營站其實再 44 分鐘有車」卻一直顯示「尚未發車」什麼資訊都沒有。
+        # 即時動態、GPS 都完全查不到資料（TDX 這站給的是「尚未發車」，完全沒有任何
+        # 到站線索）→ 最後才退回用固定時刻表概估（僅供參考），避免像「新營站其實
+        # 再 44 分鐘有車」卻一直顯示「尚未發車」什麼資訊都沒有。
+        # 這裡刻意只在 status == 1（尚未發車、真的什麼資訊都沒收到）才觸發，
+        # status == 0（營運中，只是暫時沒有預估時間）代表 TDX 其實已經確認有在營運，
+        # 這種「有收到資訊、只是沒有精確時間」的情況不應該被時刻表的猜測蓋過去，
+        # 不然會變成幾乎每一站都顯示成時刻表估計，反而讓真正的即時狀態看不出來。
         est_from_schedule = None
-        if eta is None and not gps_here and status in (0, 1):
+        if eta is None and not gps_here and status == 1:
             est_from_schedule = estimate_eta_from_schedule(schedule_dep_times, idx)
             if est_from_schedule is not None:
                 mins = int(est_from_schedule // 60)
@@ -1286,11 +1292,22 @@ def api_route_status():
         })
 
         if start_st and s_name == start_st:
-            ai_log_list.append({"站": s_name, "動態": time_text, "車牌": plate or "無",
-                                 "無障礙": "是" if is_low else "否", "電動": "是" if is_ev else "否"})
             tts_lines.append(f"等候站 {s_name}，{time_text}。{'無障礙低底盤。' if is_low else ''}{'電動公車。' if is_ev else ''}")
 
-    bus_status = f"路線：{route}（往{direction}）。等候站動態：{json.dumps(ai_log_list, ensure_ascii=False)}"
+    # 給 AI 助理當「這條路線目前狀況」的依據：整條路線每一站的動態都給，而不是只給
+    # 使用者選的那一個等候站，這樣使用者在對話裡問到「XX站」時 AI 才有實際資料可以回答，
+    # 不用亂猜、亂編。同時附上資料擷取時間，AI 才知道這份資料可能已經過一段時間了，
+    # 該提醒使用者「僅供參考、請以查詢頁面上最新結果為準」，而不是講得像絕對正確。
+    ai_stop_summary = [
+        {"站": s["name"], "動態": s["eta_text"], "車牌": s["plate"] or "無",
+         **({"往": s["branch"]} if s["branch"] else {})}
+        for s in stops_out
+    ][:30]  # 站數太多的路線只取前 30 站，避免塞爆 AI 的對話上下文
+    bus_status = (
+        f"路線：{route}（往{direction}方向，往{main_dest}）。"
+        f"資料擷取時間：{datetime.now().strftime('%H:%M:%S')}。"
+        f"逐站動態：{json.dumps(ai_stop_summary, ensure_ascii=False)}"
+    )
     state["bus_status"] = bus_status
 
     return jsonify({
@@ -1705,9 +1722,18 @@ def api_chat():
     sess = state["chat_sessions"][sid]
 
     system_msg = (
-        "你是一位專業友善的台南公車導遊，擁有完整的對話記憶。"
-        "請根據整段對話歷史，用流暢中文回答使用者問題。"
-        f"\n【目前天氣】{state['current_weather']}"
+        "你是台南公車查詢網站內建的 AI 助理，個性專業、友善、有耐心，擁有完整的對話記憶。\n"
+        "請務必遵守以下規則，確保回答精準、不誤導使用者：\n"
+        "1. 只有在下面【公車狀態】欄位裡實際列出的路線、站名、動態，才可以當作事實引用；"
+        "沒有列出的路線／站牌／到站時間，一律不要憑印象猜測或編造具體數字，"
+        "要老實說『目前沒有這條路線/這一站的即時資料』，並建議使用者到查詢頁面或地圖頁面直接查詢。\n"
+        "2. 【公車狀態】是使用者『最近一次』查詢當下的快照，附有擷取時間；"
+        "如果現在時間跟擷取時間差距較大，或使用者問的是『現在』『剛剛』這種即時性問題，"
+        "要提醒對方這筆資料可能已經過時，建議重新整理查詢頁面取得最新結果，不要講得像絕對即時。\n"
+        "3. 回答公車動態時盡量具體（幾分鐘、有沒有無障礙車、車牌等），但只用資料裡真的有的內容，"
+        "不足的部分就明說不確定，不要為了讓回答看起來完整而補上沒有根據的細節。\n"
+        "4. 用流暢自然的繁體中文回答，符合台南在地用語習慣，回答盡量精簡扼要，不要有無意義的贅字。"
+        f"\n\n【目前天氣】{state['current_weather']}"
         f"\n【公車狀態】{state['bus_status']}"
     )
     msgs = [{"role": "system", "content": system_msg}]
@@ -1717,12 +1743,15 @@ def api_chat():
 
     # Groq 三不五時會下架／改名模型（例如 2026/06 就把 llama-3.3-70b-versatile 整個下架），
     # 一旦主要模型剛好被下架，直接整個 AI 功能掛掉太可惜，這裡準備幾個備援模型依序嘗試。
+    # temperature 刻意調低（0.2）：這是公車動態查詢助理，使用者要的是準確、可核對的資訊，
+    # 不是有創意的自由發揮，溫度太高容易在時間、站名這類具體事實上「講得煞有其事但其實編的」。
     candidate_models = ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.6-27b"]
     resp = None
     last_err = None
     for m in candidate_models:
         try:
-            resp = client.chat.completions.create(messages=msgs, model=m, max_tokens=1024)
+            resp = client.chat.completions.create(
+                messages=msgs, model=m, max_tokens=1024, temperature=0.2, top_p=0.9)
             break
         except Exception as e:
             last_err = e
