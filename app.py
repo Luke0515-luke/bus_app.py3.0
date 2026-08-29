@@ -42,9 +42,6 @@ client = None
 if Groq and groq_api_key:
     try:
         client = Groq(api_key=groq_api_key)
-        completion = client.chat.completions.create(
-            temperature=0.2,  # 可調整創造性（0 到 1 之間）
-        )
     except Exception:
         client = None
         print("找不到 GROQ_API_KEY，AI 功能將受限。")
