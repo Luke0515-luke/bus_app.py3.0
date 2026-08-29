@@ -128,15 +128,7 @@ def _filter_route_entries(data, route_name):
 
 def _fetch_and_save_stop_data(route_name):
     """即時向 TDX 查詢某路線的 StopOfRoute 原始資料，驗證路線名稱後才存檔。"""
-    url = f"https://tdx.transportdata.tw/api/basic/v2/Bus/StopOfRoute/City/Tainan/{route_name}?%24format=JSON"
-    res = tdx_get(url, timeout=10, retries=1)
-    if res is None:
-        return None
-    try:
-        data = res.json()
-    except Exception:
-        return None
-    data = _filter_route_entries(data, route_name)
+    data = _fetch_route_endpoint_json("StopOfRoute", route_name, timeout=10, retries=1)
     if data:
         _save_route_json(_route_stop_file_path(route_name), data)
     return data
@@ -144,15 +136,7 @@ def _fetch_and_save_stop_data(route_name):
 
 def _fetch_and_save_shape_data(route_name):
     """即時向 TDX 查詢某路線的 Shape 原始資料，驗證路線名稱後才存檔。"""
-    url = f"https://tdx.transportdata.tw/api/basic/v2/Bus/Shape/City/Tainan/{route_name}?%24format=JSON"
-    res = tdx_get(url, timeout=10, retries=1)
-    if res is None:
-        return None
-    try:
-        data = res.json()
-    except Exception:
-        return None
-    data = _filter_route_entries(data, route_name)
+    data = _fetch_route_endpoint_json("Shape", route_name, timeout=10, retries=1)
     if data:
         _save_route_json(_route_shape_file_path(route_name), data)
     return data
@@ -162,15 +146,7 @@ def _fetch_and_save_timetable_data(route_name):
     """即時向 TDX 查詢某路線的固定時刻表（Bus/Schedule）原始資料，驗證路線名稱後才存檔。
     跟站牌／軌跡走同一套「查一次、之後都吃檔案」的邏輯，避免每次打開時刻表都要
     重新等 TDX 回應（TDX 這支端點常常比較慢，手機在訊號不穩時容易直接 fetch 失敗）。"""
-    url = f"https://tdx.transportdata.tw/api/basic/v2/Bus/Schedule/City/Tainan/{route_name}?%24format=JSON"
-    res = tdx_get(url, timeout=15, retries=1)
-    if res is None:
-        return None
-    try:
-        data = res.json()
-    except Exception:
-        return None
-    data = _filter_route_entries(data, route_name)
+    data = _fetch_route_endpoint_json("Schedule", route_name, timeout=15, retries=1)
     if data:
         _save_route_json(_route_timetable_file_path(route_name), data)
     return data
@@ -281,6 +257,47 @@ ROUTE_COLOR_MAP = {
     "901": "#8BC34A", "902": "#8BC34A", "904": "#8BC34A", "905": "#8BC34A",
     "東山": "#FF6F00", "梅嶺": "#AD1457", "菱波": "#00838F", "雙層": "#BF360C",
 }
+
+# 「觀光」分類（東山咖啡線、梅嶺線、菱波官田線、雙層巴士、33 關子嶺線、168 虎埤老街線……）
+# 在 TDX 上其實是登記在「公路客運／台灣好行（InterCity）」底下，不是市區公車，
+# 路徑要用 .../InterCity/{route_name}，不能用 .../City/Tainan/{route_name}，
+# 用錯路徑會讓這幾條路線不管怎麼查都查不到任何站牌／軌跡／時刻表資料。
+INTERCITY_SIGHTSEEING_ROUTES = set(ROUTE_CATEGORIES.get("觀光", []))
+
+
+def _is_intercity_route(route_name):
+    """判斷這條路線在 TDX 上是否屬於公路客運（InterCity），而不是市區公車。"""
+    return route_name in INTERCITY_SIGHTSEEING_ROUTES
+
+
+def _bus_api_city_segment(route_name):
+    """回傳這條路線在 TDX 公車 API 網址裡『City/縣市』或『InterCity』那一段路徑。"""
+    return "InterCity" if _is_intercity_route(route_name) else "City/Tainan"
+
+
+def _fetch_route_endpoint_json(api_name, route_name, timeout=10, retries=1):
+    """向 TDX 查某個公車端點（StopOfRoute／Shape／Schedule…）＋某路線的原始資料，並做過濾。
+    先照路線分類判斷的路徑（市區公車走 City/Tainan，觀光的台灣好行路線走 InterCity）去查；
+    如果查回來是空的，代表分類判斷可能猜錯了，再自動改試另一種路徑一次，
+    這樣即使分類表未來加了新路線、一時判斷錯誤，也不會整條線直接查不到資料。"""
+    primary_segment = _bus_api_city_segment(route_name)
+    segments_to_try = [primary_segment]
+    fallback_segment = "City/Tainan" if primary_segment == "InterCity" else "InterCity"
+    segments_to_try.append(fallback_segment)
+
+    for segment in segments_to_try:
+        url = f"https://tdx.transportdata.tw/api/basic/v2/Bus/{api_name}/{segment}/{route_name}?%24format=JSON"
+        res = tdx_get(url, timeout=timeout, retries=retries)
+        if res is None:
+            continue
+        try:
+            data = res.json()
+        except Exception:
+            continue
+        data = _filter_route_entries(data, route_name)
+        if data:
+            return data
+    return None
 
 async def backup():
         try:
@@ -581,13 +598,18 @@ def fetch_route_stops_by_direction(route_name, direction):
 
 @cached(30)
 def fetch_bus_data(route_name):
-    url = f"https://tdx.transportdata.tw/api/basic/v2/Bus/EstimatedTimeOfArrival/City/Tainan/{route_name}?%24format=JSON"
-    try:
-        res = requests.get(url, headers=tdx_headers(), timeout=10)
-        if res.status_code == 200:
-            return res.json()
-    except Exception:
-        pass
+    primary_segment = _bus_api_city_segment(route_name)
+    fallback_segment = "City/Tainan" if primary_segment == "InterCity" else "InterCity"
+    for segment in (primary_segment, fallback_segment):
+        url = f"https://tdx.transportdata.tw/api/basic/v2/Bus/EstimatedTimeOfArrival/{segment}/{route_name}?%24format=JSON"
+        try:
+            res = requests.get(url, headers=tdx_headers(), timeout=10)
+            if res.status_code == 200:
+                data = res.json()
+                if data:
+                    return data
+        except Exception:
+            pass
     return None
 
 
@@ -708,7 +730,19 @@ def fetch_shapes_and_stops_parallel(routes):
 
 def fetch_bus_realtime_positions(route_name=None):
     if route_name:
-        url = f"https://tdx.transportdata.tw/api/basic/v2/Bus/RealTimeByFrequency/City/Tainan/{route_name}?%24format=JSON"
+        primary_segment = _bus_api_city_segment(route_name)
+        fallback_segment = "City/Tainan" if primary_segment == "InterCity" else "InterCity"
+        for segment in (primary_segment, fallback_segment):
+            url = f"https://tdx.transportdata.tw/api/basic/v2/Bus/RealTimeByFrequency/{segment}/{route_name}?%24format=JSON"
+            try:
+                res = requests.get(url, headers=tdx_headers(), timeout=10)
+                if res.status_code == 200:
+                    data = res.json()
+                    if data:
+                        return data
+            except Exception:
+                pass
+        return []
     else:
         url = "https://tdx.transportdata.tw/api/basic/v2/Bus/RealTimeByFrequency/City/Tainan?%24format=JSON"
     try:
