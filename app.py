@@ -125,7 +125,10 @@ def _save_users(users):
 
 
 def _supabase_get_user(username):
-    """向 Supabase 的 users 資料表用 REST API（PostgREST）查詢帳號，找不到回傳 None。
+    """向 Supabase 的 users 資料表用 REST API（PostgREST）查詢帳號。
+    回傳 (使用者資料或 None, 錯誤說明或 None)——刻意把詳細錯誤原因也一起回傳，
+    而不是只印在 log 裡，這樣呼叫端（尤其是手動搬遷用的 admin 端點）才能直接把
+    Supabase 真正回應的錯誤內容（HTTP 狀態碼、錯誤訊息）秀出來，不用另外去翻 log。
     直接用 requests 打 REST 端點，不額外依賴 supabase 這個 pip 套件，
     跟專案裡其他呼叫外部 API（TDX、Groq）的寫法一致，部署時也不用多裝東西。"""
     try:
@@ -136,16 +139,22 @@ def _supabase_get_user(username):
             timeout=8)
         if res.status_code == 200:
             rows = res.json()
-            return rows[0] if rows else None
-        print(f"⚠️ Supabase 查詢使用者失敗：HTTP {res.status_code} {res.text[:200]}")
+            return (rows[0] if rows else None), None
+        detail = f"HTTP {res.status_code}：{res.text[:300]}"
+        print(f"⚠️ Supabase 查詢使用者失敗：{detail}")
+        return None, detail
     except Exception as e:
-        print(f"⚠️ Supabase 查詢使用者失敗：{e}")
-    return None
+        detail = str(e)
+        print(f"⚠️ Supabase 查詢使用者失敗：{detail}")
+        return None, detail
 
 
 def _supabase_create_user(username, password_hash):
     """新增一筆帳號到 Supabase 的 users 資料表。id、created_at 讓資料庫自己產生
-    （identity 欄位＋預設值 now()），這裡只需要送 username／password_hash。"""
+    （identity 欄位＋預設值 now()），這裡只需要送 username／password_hash。
+    回傳 (是否成功, 錯誤說明或 None)，理由同上——把 Supabase 實際回應的錯誤內容
+    往上帶，方便直接從 API 回應判斷問題（常見的像是金鑰錯誤、資料表權限、
+    username 違反 UNIQUE 限制等等，錯誤訊息裡通常會講清楚）。"""
     try:
         res = requests.post(
             f"{SUPABASE_URL}/rest/v1/users",
@@ -153,25 +162,30 @@ def _supabase_create_user(username, password_hash):
             json={"username": username, "password_hash": password_hash},
             timeout=8)
         if res.status_code in (200, 201):
-            return True
-        print(f"⚠️ Supabase 新增使用者失敗：HTTP {res.status_code} {res.text[:200]}")
+            return True, None
+        detail = f"HTTP {res.status_code}：{res.text[:300]}"
+        print(f"⚠️ Supabase 新增使用者失敗：{detail}")
+        return False, detail
     except Exception as e:
-        print(f"⚠️ Supabase 新增使用者失敗：{e}")
-    return False
+        detail = str(e)
+        print(f"⚠️ Supabase 新增使用者失敗：{detail}")
+        return False, detail
 
 
 def get_user_record(username):
     """查詢帳號資料：Supabase 有設定好就查 Supabase，沒有設定的話（例如本機開發環境）
     退回讀本機 users.json，帳號功能還是能正常運作，不會因為少了 Supabase 金鑰就整個掛掉。"""
     if _supabase_enabled():
-        return _supabase_get_user(username)
+        row, _err = _supabase_get_user(username)
+        return row
     return _load_users().get(username)
 
 
 def create_user_record(username, password_hash):
     """新增帳號：邏輯跟 get_user_record 對稱，一樣是 Supabase 優先、本機檔案當備援。"""
     if _supabase_enabled():
-        return _supabase_create_user(username, password_hash)
+        ok, _err = _supabase_create_user(username, password_hash)
+        return ok
     users = _load_users()
     users[username] = {
         "password_hash": password_hash,
@@ -190,7 +204,9 @@ def _migrate_local_users_to_supabase():
 
     每個分支都會印出訊息（不管有沒有東西可搬、成功或失敗），刻意不要「靜默跳過」——
     之前『本機沒有帳號資料』的情況完全不會印任何東西，導致沒辦法從 Render 的 log
-    分辨到底是「本來就沒有舊帳號」還是「搬遷根本沒執行到」，除錯很困難。"""
+    分辨到底是「本來就沒有舊帳號」還是「搬遷根本沒執行到」，除錯很困難。
+    失敗的話會把 Supabase 實際回應的錯誤內容一起收集進 errors，直接回傳給呼叫端
+    （/api/admin/migrate_users），不用另外去翻 log 才找得到真正的失敗原因。"""
     if not _supabase_enabled():
         print("ℹ️ 舊帳號搬遷：Supabase 尚未設定（SUPABASE_URL / SUPABASE_SERVICE_KEY），略過。")
         return {"ran": False, "reason": "supabase_not_configured"}
@@ -199,23 +215,35 @@ def _migrate_local_users_to_supabase():
         print(f"ℹ️ 舊帳號搬遷：本機找不到帳號資料（{USERS_FILE} 不存在或是空的），沒有東西可以搬。"
               "如果你確定之前有註冊過帳號，可能是 Render 的磁碟在這次部署時被清空、"
               "或是備份還原（pull_backup）還沒跑完就先執行到這裡了。")
-        return {"ran": True, "local_count": 0, "migrated": 0, "skipped": 0, "failed": 0}
+        return {"ran": True, "local_count": 0, "migrated": 0, "skipped": 0, "failed": 0, "errors": []}
     print(f"ℹ️ 舊帳號搬遷：本機找到 {len(local_users)} 個帳號，開始搬到 Supabase...")
     migrated, skipped, failed = 0, 0, 0
+    errors = []
     for username, info in local_users.items():
         pw_hash = (info or {}).get("password_hash")
         if not pw_hash:
             failed += 1
+            errors.append({"username": username, "reason": "本機資料裡缺少 password_hash"})
             continue
-        if _supabase_get_user(username):
+        existing, get_err = _supabase_get_user(username)
+        if existing:
             skipped += 1
             continue
-        if _supabase_create_user(username, pw_hash):
+        if get_err:
+            failed += 1
+            errors.append({"username": username, "reason": f"查詢是否已存在時失敗：{get_err}"})
+            continue
+        ok, create_err = _supabase_create_user(username, pw_hash)
+        if ok:
             migrated += 1
         else:
             failed += 1
+            errors.append({"username": username, "reason": create_err or "未知錯誤"})
     print(f"✅ 舊帳號搬遷到 Supabase 完成：新增 {migrated} 個、已存在略過 {skipped} 個、失敗 {failed} 個。")
-    return {"ran": True, "local_count": len(local_users), "migrated": migrated, "skipped": skipped, "failed": failed}
+    for e in errors[:5]:
+        print(f"   - {e['username']}：{e['reason']}")
+    return {"ran": True, "local_count": len(local_users), "migrated": migrated,
+            "skipped": skipped, "failed": failed, "errors": errors[:10]}
 
 
 # 應用程式啟動時就跑一次舊帳號搬遷（見上面函式說明）。包一層 try/except，
