@@ -41,6 +41,9 @@ const state = {
   mapShapeData: [],
   mapStopData: [],
   savedRoutes: [],
+  reminders: [],
+  reminderAlertedIds: new Set(),
+  reminderPollTimer: null,
   busListOpen: true,
   leafletMap: null,
   busLayer: null,
@@ -96,6 +99,7 @@ document.addEventListener('DOMContentLoaded', () => {
   loadChatCurrent();
   loadAdvancedStops();
   loadAuthStatus();
+  loadReminders();
 });
 
 function bindStaticEvents() {
@@ -164,6 +168,8 @@ function bindStaticEvents() {
   el('auth-password').addEventListener('keydown', e => { if (e.key === 'Enter') submitAuth('/api/auth/login'); });
 
   el('btn-map-locate').addEventListener('click', locateMeOnMap);
+
+  el('btn-add-reminder').addEventListener('click', addReminder);
 
   el('btn-chat-send').addEventListener('click', sendChat);
   el('chat-input').addEventListener('keydown', e => { if (e.key === 'Enter') sendChat(); });
@@ -365,6 +371,7 @@ async function onRouteSelect() {
   const route = el('route-select').value;
   state.routeChoice = route;
   el('stop-select-body').classList.add('hidden');
+  el('reminder-add-box').classList.add('hidden');
   el('status-box').classList.add('hidden');
   el('weather-box').classList.add('hidden');
   el('status-empty').classList.remove('hidden');
@@ -399,6 +406,7 @@ async function onRouteSelect() {
   startSel.selectedIndex = 0;
   endSel.selectedIndex = data.stops.length - 1;
   el('stop-select-body').classList.remove('hidden');
+  el('reminder-add-box').classList.remove('hidden');
 
   await loadRouteStatus();
 }
@@ -695,7 +703,7 @@ async function submitAuth(url) {
     el('auth-password').value = '';
     renderAuthState(data.username);
     // 登入／註冊後身分變了，最愛路線、最近查詢、AI 對話記錄都要重新載入成這個帳號的資料
-    await Promise.all([loadFavorites(), loadRecent(), loadChatSessions(), loadChatCurrent()]);
+    await Promise.all([loadFavorites(), loadRecent(), loadChatSessions(), loadChatCurrent(), loadReminders()]);
   } catch (e) {
     statusBox.innerHTML = `<div class="error-box">${esc(e.message)}</div>`;
   }
@@ -703,7 +711,183 @@ async function submitAuth(url) {
 async function logoutAccount() {
   await api('/api/auth/logout', { method: 'POST' });
   renderAuthState(null);
-  await Promise.all([loadFavorites(), loadRecent(), loadChatSessions(), loadChatCurrent()]);
+  await Promise.all([loadFavorites(), loadRecent(), loadChatSessions(), loadChatCurrent(), loadReminders()]);
+}
+
+// ── 到站鈴聲提醒 ───────────────────────────────────────────
+// 播提示音用同一顆 AudioContext 就好，不要每次響鈴都 new 一個：
+// 瀏覽器的自動播放限制大多只卡在「第一次要有使用者手動操作過」，
+// 所以在第一次點擊頁面時就先建立好、resume 起來，之後背景計時器
+// 觸發提醒時才能順利發出聲音，不會被靜音擋掉。
+let sharedAudioCtx = null;
+function unlockReminderAudio() {
+  if (!sharedAudioCtx) {
+    try { sharedAudioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { return; }
+  }
+  if (sharedAudioCtx.state === 'suspended') sharedAudioCtx.resume();
+}
+document.addEventListener('click', unlockReminderAudio, { once: true });
+
+function playReminderBell() {
+  try {
+    if (!sharedAudioCtx) sharedAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (sharedAudioCtx.state === 'suspended') sharedAudioCtx.resume();
+    const ctx = sharedAudioCtx;
+    const now = ctx.currentTime;
+    // 「叮－咚」兩個音，連響三次，聽起來像到站鈴聲，不需要額外的音效檔案
+    [0, 0.9, 1.8].forEach(offset => {
+      [[880, offset], [660, offset + 0.28]].forEach(([freq, t]) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = freq;
+        gain.gain.setValueAtTime(0, now + t);
+        gain.gain.linearRampToValueAtTime(0.35, now + t + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + t + 0.25);
+        osc.connect(gain).connect(ctx.destination);
+        osc.start(now + t);
+        osc.stop(now + t + 0.3);
+      });
+    });
+  } catch (e) { /* 瀏覽器不支援音效就算了，畫面上的橫幅通知還是會照常顯示 */ }
+}
+
+let reminderBannerTimeout = null;
+function showReminderBanner(msg) {
+  const b = el('reminder-banner');
+  if (!b) return;
+  b.textContent = msg;
+  b.classList.remove('hidden');
+  clearTimeout(reminderBannerTimeout);
+  reminderBannerTimeout = setTimeout(() => b.classList.add('hidden'), 10000);
+}
+
+// 把「5 分鐘」「約 44 分鐘（時刻表估計）」這類到站文字轉成數字分鐘；
+// 「即將進站」「進站中」視為 0 分鐘；「尚未發車」等完全沒有時間資訊的狀態回傳 null。
+function parseEtaMinutes(text) {
+  if (!text) return null;
+  if (text.includes('即將進站') || text.includes('進站中')) return 0;
+  const m = text.match(/(\d+)\s*分鐘/);
+  if (m) return parseInt(m[1], 10);
+  return null;
+}
+
+async function addReminder() {
+  const route = state.routeChoice;
+  const direction = state.dirToggle;
+  const stop = el('start-select').value;
+  const minutes = el('reminder-minutes').value;
+  if (!route || !stop) return;
+  unlockReminderAudio();
+  if (window.Notification && Notification.permission === 'default') {
+    Notification.requestPermission();
+  }
+  try {
+    const data = await api('/api/reminders/add', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ route, direction, stop, alert_minutes: minutes })
+    });
+    if (data.error) {
+      showReminderBanner(`⚠️ ${data.error}`);
+      return;
+    }
+    state.reminders = data.reminders;
+    renderReminders();
+    ensureReminderPolling();
+    showReminderBanner(`🔔 已設定：${route}（往${direction}）到站前 ${minutes} 分鐘提醒`);
+  } catch (e) { /* 忽略單次失敗，使用者可以再按一次 */ }
+}
+
+function ensureReminderPolling() {
+  if (state.reminders.length && !state.reminderPollTimer) {
+    state.reminderPollTimer = setInterval(checkReminders, 20000);
+    checkReminders();
+  } else if (!state.reminders.length && state.reminderPollTimer) {
+    clearInterval(state.reminderPollTimer);
+    state.reminderPollTimer = null;
+  }
+}
+
+async function loadReminders() {
+  try {
+    const data = await api('/api/reminders');
+    state.reminders = data.reminders || [];
+    renderReminders();
+    ensureReminderPolling();
+  } catch (e) { /* 忽略，稍後其他操作觸發時還會再拉一次 */ }
+}
+
+function renderReminders() {
+  const section = el('reminders-section');
+  const list = el('reminders-list');
+  if (!state.reminders.length) {
+    section.classList.add('hidden');
+    list.innerHTML = '';
+    return;
+  }
+  section.classList.remove('hidden');
+  list.innerHTML = state.reminders.map(r => `
+    <div class="stop-item reminder-item">
+      <div>
+        <b>${esc(r.route)}</b>（往${esc(r.direction)}）－ ${esc(r.stop)}<br>
+        <span class="caption">到站前 ${r.alert_minutes} 分鐘提醒</span>
+      </div>
+      <button class="btn reminder-delete-btn" data-id="${esc(r.id)}">🗑️</button>
+    </div>`).join('');
+  list.querySelectorAll('.reminder-delete-btn').forEach(b => {
+    b.addEventListener('click', async () => {
+      const id = b.dataset.id;
+      try {
+        await api('/api/reminders/delete', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id })
+        });
+      } catch (e) { /* 忽略 */ }
+      state.reminderAlertedIds.delete(id);
+      state.reminders = state.reminders.filter(r => r.id !== id);
+      renderReminders();
+      ensureReminderPolling();
+    });
+  });
+}
+
+async function checkReminders() {
+  if (!state.reminders.length) return;
+  if (!el('reminder-sound-enabled').checked) return;
+  // 同一條路線＋方向如果被好幾個提醒共用，合併成一次查詢就好，不用每個提醒各查一次
+  const groups = {};
+  state.reminders.forEach(r => {
+    const key = `${r.route}|${r.direction}`;
+    (groups[key] = groups[key] || []).push(r);
+  });
+  for (const key of Object.keys(groups)) {
+    const [route, direction] = key.split('|');
+    try {
+      const params = new URLSearchParams({ route, direction });
+      const data = await api(`/api/route_status?${params.toString()}`);
+      if (!data.stops) continue;
+      groups[key].forEach(r => {
+        const stopInfo = data.stops.find(s => s.name === r.stop);
+        if (!stopInfo) return;
+        const mins = parseEtaMinutes(stopInfo.eta_text);
+        if (mins !== null && mins <= r.alert_minutes) {
+          if (!state.reminderAlertedIds.has(r.id)) {
+            state.reminderAlertedIds.add(r.id);
+            playReminderBell();
+            const msg = `🔔 ${r.route}（往${r.direction}）即將抵達「${r.stop}」：${stopInfo.eta_text}`;
+            showReminderBanner(msg);
+            if (window.Notification && Notification.permission === 'granted') {
+              new Notification('公車到站提醒', { body: msg });
+            }
+          }
+        } else {
+          // 車還沒到門檻範圍內（或這班已經過站、換下一班了），解除已提醒標記，
+          // 下一班車再進入提醒範圍時才能重新響鈴，不會被卡住只提醒一次。
+          state.reminderAlertedIds.delete(r.id);
+        }
+      });
+    } catch (e) { /* 這次查詢失敗就跳過，20 秒後下個週期會重試 */ }
+  }
 }
 
 // ── 系統維護 ─────────────────────────────────────────────
