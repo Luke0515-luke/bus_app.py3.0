@@ -186,24 +186,36 @@ def _migrate_local_users_to_supabase():
     Supabase 的 users 資料表。只在有設定 Supabase 環境變數時才會執行；每個帳號都會
     先用 username 查一次是否已經存在，存在就跳過（不會覆蓋 Supabase 上已有的密碼），
     確保重複執行（例如伺服器重啟、多個 worker process 各自啟動一次）也不會出錯或
-    搬出重複帳號。搬完之後，新註冊的帳號一律直接寫進 Supabase，不會再用到本機檔案。"""
+    搬出重複帳號。搬完之後，新註冊的帳號一律直接寫進 Supabase，不會再用到本機檔案。
+
+    每個分支都會印出訊息（不管有沒有東西可搬、成功或失敗），刻意不要「靜默跳過」——
+    之前『本機沒有帳號資料』的情況完全不會印任何東西，導致沒辦法從 Render 的 log
+    分辨到底是「本來就沒有舊帳號」還是「搬遷根本沒執行到」，除錯很困難。"""
     if not _supabase_enabled():
-        return
+        print("ℹ️ 舊帳號搬遷：Supabase 尚未設定（SUPABASE_URL / SUPABASE_SERVICE_KEY），略過。")
+        return {"ran": False, "reason": "supabase_not_configured"}
     local_users = _load_users()
     if not local_users:
-        return
-    migrated, skipped = 0, 0
+        print(f"ℹ️ 舊帳號搬遷：本機找不到帳號資料（{USERS_FILE} 不存在或是空的），沒有東西可以搬。"
+              "如果你確定之前有註冊過帳號，可能是 Render 的磁碟在這次部署時被清空、"
+              "或是備份還原（pull_backup）還沒跑完就先執行到這裡了。")
+        return {"ran": True, "local_count": 0, "migrated": 0, "skipped": 0, "failed": 0}
+    print(f"ℹ️ 舊帳號搬遷：本機找到 {len(local_users)} 個帳號，開始搬到 Supabase...")
+    migrated, skipped, failed = 0, 0, 0
     for username, info in local_users.items():
         pw_hash = (info or {}).get("password_hash")
         if not pw_hash:
+            failed += 1
             continue
         if _supabase_get_user(username):
             skipped += 1
             continue
         if _supabase_create_user(username, pw_hash):
             migrated += 1
-    if migrated or skipped:
-        print(f"✅ 舊帳號搬遷到 Supabase 完成：新增 {migrated} 個、已存在略過 {skipped} 個。")
+        else:
+            failed += 1
+    print(f"✅ 舊帳號搬遷到 Supabase 完成：新增 {migrated} 個、已存在略過 {skipped} 個、失敗 {failed} 個。")
+    return {"ran": True, "local_count": len(local_users), "migrated": migrated, "skipped": skipped, "failed": failed}
 
 
 # 應用程式啟動時就跑一次舊帳號搬遷（見上面函式說明）。包一層 try/except，
@@ -1174,6 +1186,23 @@ def api_auth_logout():
     session.pop("username", None)
     session.pop("uid", None)
     return jsonify({"ok": True})
+
+
+@app.route('/api/admin/migrate_users', methods=['POST'])
+def api_admin_migrate_users():
+    """手動重新觸發一次「本機 users.json → Supabase」的舊帳號搬遷。
+    平常用不到，只有在懷疑伺服器啟動當下搬遷沒有成功執行（例如剛設定好 Supabase
+    環境變數但還沒重新部署、或本機檔案剛好還原得比較慢）時，拿來手動補跑一次，
+    不用整個服務重新部署。回傳的內容會直接告訴你本機到底找到幾個帳號、搬了幾個。
+    需要帶對 ADMIN_TOKEN（環境變數）才能執行，避免被任何人隨便觸發。"""
+    admin_token = os.environ.get("ADMIN_TOKEN", "")
+    if not admin_token:
+        return jsonify({"error": "伺服器尚未設定 ADMIN_TOKEN 環境變數，無法使用這支端點"}), 400
+    provided = (request.get_json(silent=True) or {}).get("token", "") or request.args.get("token", "")
+    if provided != admin_token:
+        return jsonify({"error": "未授權"}), 403
+    result = _migrate_local_users_to_supabase()
+    return jsonify(result)
 
 
 # ══════════════════════════════════════════════════════════
