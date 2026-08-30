@@ -405,6 +405,7 @@ def _default_state():
     return {
         "recent_routes": [],
         "favorite_routes": [],
+        "reminders": [],
         "chat_sessions": {},
         "current_session_id": None,
         "current_weather": "尚未查詢",
@@ -447,6 +448,8 @@ def _login_user(username):
             new_state["favorite_routes"] = old_state["favorite_routes"]
         if not new_state.get("recent_routes") and old_state.get("recent_routes"):
             new_state["recent_routes"] = old_state["recent_routes"]
+        if not new_state.get("reminders") and old_state.get("reminders"):
+            new_state["reminders"] = old_state["reminders"]
 
 
 # ── 基礎工具 ──────────────────────────────────────────────
@@ -1360,6 +1363,71 @@ def api_favorites_toggle():
 @app.route('/api/recent', methods=['GET'])
 def api_recent_get():
     return jsonify({"recent": get_state()["recent_routes"]})
+
+
+# ══════════════════════════════════════════════════════════
+# API：到站鈴聲提醒
+# ══════════════════════════════════════════════════════════
+@app.route('/api/reminders', methods=['GET'])
+def api_reminders_get():
+    return jsonify({"reminders": get_state()["reminders"]})
+
+
+@app.route('/api/reminders/add', methods=['POST'])
+def api_reminders_add():
+    data = request.get_json(silent=True) or {}
+    route = (data.get('route') or '').strip()
+    direction = (data.get('direction') or '去程').strip()
+    stop = (data.get('stop') or '').strip()
+    try:
+        alert_minutes = int(data.get('alert_minutes', 5))
+    except (TypeError, ValueError):
+        alert_minutes = 5
+    alert_minutes = max(1, min(alert_minutes, 60))
+    if not route or not stop:
+        return jsonify({"error": "請先選擇路線與站牌，再加入到站提醒"}), 400
+
+    state = get_state()
+    reminders = state["reminders"]
+    # 同一條路線＋方向＋站牌只留一筆，重複加入的話當作只是要改提醒時間，不要一直疊出重複項目
+    for r in reminders:
+        if r["route"] == route and r["direction"] == direction and r["stop"] == stop:
+            r["alert_minutes"] = alert_minutes
+            return jsonify({"reminders": reminders})
+    if len(reminders) >= 20:
+        return jsonify({"error": "最多只能設定 20 個到站提醒，請先刪除幾個舊的"}), 400
+    reminders.append({
+        "id": str(uuid.uuid4())[:8],
+        "route": route, "direction": direction, "stop": stop,
+        "alert_minutes": alert_minutes,
+        "created": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    })
+    return jsonify({"reminders": reminders})
+
+
+@app.route('/api/reminders/update', methods=['POST'])
+def api_reminders_update():
+    data = request.get_json(silent=True) or {}
+    rid = data.get('id')
+    state = get_state()
+    reminders = state["reminders"]
+    for r in reminders:
+        if r["id"] == rid:
+            if "alert_minutes" in data:
+                try:
+                    r["alert_minutes"] = max(1, min(int(data["alert_minutes"]), 60))
+                except (TypeError, ValueError):
+                    pass
+            break
+    return jsonify({"reminders": reminders})
+
+
+@app.route('/api/reminders/delete', methods=['POST'])
+def api_reminders_delete():
+    rid = (request.get_json(silent=True) or {}).get('id')
+    state = get_state()
+    state["reminders"] = [r for r in state["reminders"] if r["id"] != rid]
+    return jsonify({"reminders": state["reminders"]})
 
 
 # ══════════════════════════════════════════════════════════
