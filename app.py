@@ -16,11 +16,6 @@ try:
 except ImportError:
     Groq = None
 
-try:
-    from supabase import create_client
-except ImportError:
-    create_client = None
-
 from pull_backup import pull_backup
 from push_backup import git_push_backup
 import asyncio
@@ -53,22 +48,6 @@ if Groq and groq_api_key:
 else:
     print("找不到 GROQ_API_KEY，AI 功能將受限。")
 
-# ── Supabase（帳號、站牌座標）──────────────────────────────
-# 用 Service Role Key（不是 anon key）：後端寫入使用者密碼雜湊、批次同步站牌座標
-# 都需要繞過 RLS，一定要用有寫入權限的金鑰，不要把這把金鑰外流到前端。
-SUPABASE_URL = os.environ.get("SUPABASE_URL")
-SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY") or os.environ.get("SUPABASE_KEY")
-
-supabase = None
-if create_client and SUPABASE_URL and SUPABASE_KEY:
-    try:
-        supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-    except Exception as e:
-        supabase = None
-        print(f"⚠️ Supabase 連線失敗，帳號／站牌資料將改用本機檔案備援：{e}")
-else:
-    print("尚未設定 SUPABASE_URL / SUPABASE_SERVICE_KEY，帳號／站牌資料改用本機檔案備援。")
-
 AUTH_URL = "https://tdx.transportdata.tw/auth/realms/TDXConnect/protocol/openid-connect/token"
 TAINAN_LAT, TAINAN_LON = 22.9997, 120.2270
 UBIKE_MIN_PER_KM = 10  # 使用者指定：騎 UBike 的時間概估用「1 公里約 10 分鐘」計算
@@ -89,7 +68,21 @@ USERS_FILE = "/opt/render/project/data/users.json"
 _users_lock = threading.Lock()
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
+# 很多人會把 Supabase 的網址複製成連 /rest/v1 都帶進來（例如從 Connect 對話框、
+# 或某些教學文章複製的是完整 REST 端點，不是單純的 Project URL）。我們自己組網址
+# 時會再補一次 /rest/v1/users，如果環境變數本身已經帶了 /rest/v1，就會兜成
+# .../rest/v1/rest/v1/users 這種重複路徑，PostgREST 會回傳 PGRST125
+# 「Invalid path specified in request URL」——這裡自動把常見的尾綴修掉，
+# 不管貼的是哪一種網址格式都能正常運作。
+for _suffix in ("/rest/v1", "/rest"):
+    if SUPABASE_URL.endswith(_suffix):
+        SUPABASE_URL = SUPABASE_URL[: -len(_suffix)]
+        break
 SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
+
+if SUPABASE_URL:
+    print(f"ℹ️ Supabase 設定：實際會呼叫的 REST 端點是 {SUPABASE_URL}/rest/v1/users"
+          "（如果這個網址看起來不對，檢查一下 Render 上 SUPABASE_URL 這個環境變數）。")
 
 
 def _supabase_enabled():
