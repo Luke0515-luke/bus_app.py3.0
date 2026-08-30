@@ -46,7 +46,7 @@ html, body { height: 100%; background: #f5f6fa; color: #222; }
 #sidebar h3 { font-size: 14px; color: #cfd8ff; margin: 10px 0 6px; }
 #sidebar hr { border: none; border-top: 1px solid var(--ink-line); margin: 14px 0; }
 #sidebar label { display: block; font-size: 12px; color: var(--text-muted); margin: 8px 0 4px; }
-#sidebar select, #sidebar input[type="text"], #sidebar input[type="password"] {
+#sidebar select, #sidebar input[type="text"], #sidebar input[type="password"], #sidebar input[type="number"] {
   width: 100%; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--ink-line);
   background: var(--ink-elevated); color: #eee; font-size: 13px; margin-bottom: 4px;
 }
@@ -465,3 +465,18 @@ body.theme-night .chat-msg.user { background: #1d2c4d; }
 body.theme-night .chat-msg.assistant { background: #1a1d29; }
 body.theme-night #yellow-bus-picker { background: #241f0d; border-color: #5c4a1166; }
 body.theme-night #yellow-bus-picker select { background: #171a24; color: #eee; border-color: #2a3350; }
+
+/* ── 到站鈴聲提醒 ─────────────────────────────────────── */
+#reminder-banner {
+  position: fixed; top: 14px; left: 50%; transform: translateX(-50%);
+  background: #16a085; color: #fff; padding: 12px 22px; border-radius: 10px;
+  font-weight: bold; font-size: 14px; z-index: 9999; box-shadow: 0 4px 16px rgba(0,0,0,.35);
+  max-width: 90vw; text-align: center;
+}
+#reminder-banner.hidden { display: none; }
+.reminder-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 8px 6px; border-bottom: 1px solid #333a52;
+}
+.reminder-delete-btn { padding: 4px 10px; flex-shrink: 0; }
+body.theme-night .reminder-item { border-color: #262a38; }
