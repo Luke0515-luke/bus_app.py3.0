@@ -4,7 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>🚌 台南公車 AI 助理</title>
-<link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -13,6 +12,7 @@
 
 <button id="btn-mobile-menu" class="mobile-menu-btn" aria-label="開啟選單">☰</button>
 <div id="sidebar-backdrop"></div>
+<div id="reminder-banner" class="hidden"></div>
 
 <div id="app">
 
@@ -42,6 +42,16 @@
     <div id="recent-section" class="hidden">
       <h3>🕐 最近查詢</h3>
       <div id="recent-list"></div>
+      <hr>
+    </div>
+
+    <div id="reminders-section" class="hidden">
+      <h3>🔔 到站鈴聲提醒</h3>
+      <div id="reminders-list"></div>
+      <label style="margin-top:6px;display:flex;align-items:center;gap:6px;cursor:pointer;">
+        <input type="checkbox" id="reminder-sound-enabled" checked style="width:auto;margin:0;">
+        啟用鈴聲提醒（需要瀏覽器分頁保持開啟）
+      </label>
       <hr>
     </div>
 
@@ -190,6 +200,14 @@
                 <select id="start-select"></select>
                 <label>目的地</label>
                 <select id="end-select"></select>
+              </div>
+
+              <div id="reminder-add-box" class="hidden">
+                <label>🔔 到站前幾分鐘提醒（會有鈴聲）</label>
+                <div class="dir-buttons">
+                  <input type="number" id="reminder-minutes" min="1" max="60" value="5" style="flex:1;">
+                  <button id="btn-add-reminder" class="btn dir-btn">🔔 加入到站提醒</button>
+                </div>
               </div>
               <div id="route-hint" class="info-box">請選擇路線</div>
 
