@@ -16,6 +16,11 @@ try:
 except ImportError:
     Groq = None
 
+try:
+    from supabase import create_client
+except ImportError:
+    create_client = None
+
 from pull_backup import pull_backup
 from push_backup import git_push_backup
 import asyncio
@@ -48,6 +53,22 @@ if Groq and groq_api_key:
 else:
     print("找不到 GROQ_API_KEY，AI 功能將受限。")
 
+# ── Supabase（帳號、站牌座標）──────────────────────────────
+# 用 Service Role Key（不是 anon key）：後端寫入使用者密碼雜湊、批次同步站牌座標
+# 都需要繞過 RLS，一定要用有寫入權限的金鑰，不要把這把金鑰外流到前端。
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY") or os.environ.get("SUPABASE_KEY")
+
+supabase = None
+if create_client and SUPABASE_URL and SUPABASE_KEY:
+    try:
+        supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+    except Exception as e:
+        supabase = None
+        print(f"⚠️ Supabase 連線失敗，帳號／站牌資料將改用本機檔案備援：{e}")
+else:
+    print("尚未設定 SUPABASE_URL / SUPABASE_SERVICE_KEY，帳號／站牌資料改用本機檔案備援。")
+
 AUTH_URL = "https://tdx.transportdata.tw/auth/realms/TDXConnect/protocol/openid-connect/token"
 TAINAN_LAT, TAINAN_LON = 22.9997, 120.2270
 UBIKE_MIN_PER_KM = 10  # 使用者指定：騎 UBike 的時間概估用「1 公里約 10 分鐘」計算
@@ -58,13 +79,34 @@ UBIKE_MIN_PER_KM = 10  # 使用者指定：騎 UBike 的時間概估用「1 公�
 ROUTE_DATA_SAVE_DIR = "/opt/render/project/data/route"
 _route_file_lock = threading.Lock()
 
-# 使用者帳號資料（登入系統）。跟路線原始資料放在同一個會被排程備份到 GitHub 的
-# /opt/render/project/data 底下，Render 重啟、清空硬碟也不會遺失已註冊的帳號。
+# 使用者帳號資料（登入系統）。
+# 正式儲存位置改成 Supabase 的 users 資料表（id、created_at、username、password_hash），
+# 不再依賴本機檔案＋排程備份到 GitHub 那一套——帳號密碼雜湊值本來就不該進 git 歷史紀錄，
+# 就算是雜湊過的也一樣，用真正的資料庫存放才是正確作法。
+# USERS_FILE／_load_users／_save_users 保留下來，純粹是給「還沒設定 Supabase 環境變數時」
+# 的本機備援用（例如本機開發環境），以及把舊帳號一次性搬去 Supabase 時當作資料來源。
 USERS_FILE = "/opt/render/project/data/users.json"
 _users_lock = threading.Lock()
 
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
+SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
+
+
+def _supabase_enabled():
+    return bool(SUPABASE_URL and SUPABASE_SERVICE_KEY)
+
+
+def _supabase_headers():
+    return {
+        "apikey": SUPABASE_SERVICE_KEY,
+        "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
+        "Content-Type": "application/json",
+    }
+
 
 def _load_users():
+    """舊版本機備援：讀取 /opt/render/project/data/users.json。
+    只有在 Supabase 沒有設定好環境變數時才會用到（見 get_user_record／create_user_record）。"""
     try:
         with open(USERS_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
@@ -80,6 +122,100 @@ def _save_users(users):
                 json.dump(users, f, ensure_ascii=False, indent=2)
         except Exception as e:
             print(f"⚠️ 寫入使用者資料失敗：{e}")
+
+
+def _supabase_get_user(username):
+    """向 Supabase 的 users 資料表用 REST API（PostgREST）查詢帳號，找不到回傳 None。
+    直接用 requests 打 REST 端點，不額外依賴 supabase 這個 pip 套件，
+    跟專案裡其他呼叫外部 API（TDX、Groq）的寫法一致，部署時也不用多裝東西。"""
+    try:
+        res = requests.get(
+            f"{SUPABASE_URL}/rest/v1/users",
+            headers=_supabase_headers(),
+            params={"username": f"eq.{username}", "select": "*", "limit": 1},
+            timeout=8)
+        if res.status_code == 200:
+            rows = res.json()
+            return rows[0] if rows else None
+        print(f"⚠️ Supabase 查詢使用者失敗：HTTP {res.status_code} {res.text[:200]}")
+    except Exception as e:
+        print(f"⚠️ Supabase 查詢使用者失敗：{e}")
+    return None
+
+
+def _supabase_create_user(username, password_hash):
+    """新增一筆帳號到 Supabase 的 users 資料表。id、created_at 讓資料庫自己產生
+    （identity 欄位＋預設值 now()），這裡只需要送 username／password_hash。"""
+    try:
+        res = requests.post(
+            f"{SUPABASE_URL}/rest/v1/users",
+            headers=_supabase_headers(),
+            json={"username": username, "password_hash": password_hash},
+            timeout=8)
+        if res.status_code in (200, 201):
+            return True
+        print(f"⚠️ Supabase 新增使用者失敗：HTTP {res.status_code} {res.text[:200]}")
+    except Exception as e:
+        print(f"⚠️ Supabase 新增使用者失敗：{e}")
+    return False
+
+
+def get_user_record(username):
+    """查詢帳號資料：Supabase 有設定好就查 Supabase，沒有設定的話（例如本機開發環境）
+    退回讀本機 users.json，帳號功能還是能正常運作，不會因為少了 Supabase 金鑰就整個掛掉。"""
+    if _supabase_enabled():
+        return _supabase_get_user(username)
+    return _load_users().get(username)
+
+
+def create_user_record(username, password_hash):
+    """新增帳號：邏輯跟 get_user_record 對稱，一樣是 Supabase 優先、本機檔案當備援。"""
+    if _supabase_enabled():
+        return _supabase_create_user(username, password_hash)
+    users = _load_users()
+    users[username] = {
+        "password_hash": password_hash,
+        "created": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    _save_users(users)
+    return True
+
+
+def _migrate_local_users_to_supabase():
+    """把舊版存在本機 users.json 裡、Supabase 上線前就已經註冊的帳號，一次性搬到
+    Supabase 的 users 資料表。只在有設定 Supabase 環境變數時才會執行；每個帳號都會
+    先用 username 查一次是否已經存在，存在就跳過（不會覆蓋 Supabase 上已有的密碼），
+    確保重複執行（例如伺服器重啟、多個 worker process 各自啟動一次）也不會出錯或
+    搬出重複帳號。搬完之後，新註冊的帳號一律直接寫進 Supabase，不會再用到本機檔案。"""
+    if not _supabase_enabled():
+        return
+    local_users = _load_users()
+    if not local_users:
+        return
+    migrated, skipped = 0, 0
+    for username, info in local_users.items():
+        pw_hash = (info or {}).get("password_hash")
+        if not pw_hash:
+            continue
+        if _supabase_get_user(username):
+            skipped += 1
+            continue
+        if _supabase_create_user(username, pw_hash):
+            migrated += 1
+    if migrated or skipped:
+        print(f"✅ 舊帳號搬遷到 Supabase 完成：新增 {migrated} 個、已存在略過 {skipped} 個。")
+
+
+# 應用程式啟動時就跑一次舊帳號搬遷（見上面函式說明）。包一層 try/except，
+# 就算 Supabase 一時連不上，也不能讓整個網站因此啟動失敗。
+try:
+    _migrate_local_users_to_supabase()
+except Exception as e:
+    print(f"⚠️ 搬遷舊帳號到 Supabase 時發生錯誤（不影響網站正常啟動）：{e}")
+
+if not _supabase_enabled():
+    print("ℹ️ 尚未設定 SUPABASE_URL / SUPABASE_SERVICE_KEY，帳號登入功能暫時使用本機檔案儲存"
+          "（/opt/render/project/data/users.json），正式環境建議設定好 Supabase 環境變數。")
 
 
 def _route_stop_file_path(route_name):
@@ -1013,14 +1149,10 @@ def api_auth_register():
         return jsonify({"error": "帳號至少需要 2 個字"}), 400
     if len(password) < 4:
         return jsonify({"error": "密碼至少需要 4 碼"}), 400
-    users = _load_users()
-    if username in users:
+    if get_user_record(username):
         return jsonify({"error": "這個帳號已經被註冊了，請直接登入或換一個帳號"}), 400
-    users[username] = {
-        "password_hash": generate_password_hash(password),
-        "created": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-    }
-    _save_users(users)
+    if not create_user_record(username, generate_password_hash(password)):
+        return jsonify({"error": "帳號建立失敗，請稍後再試"}), 500
     _login_user(username)
     return jsonify({"username": username})
 
@@ -1030,8 +1162,7 @@ def api_auth_login():
     data = request.get_json(silent=True) or {}
     username = (data.get('username') or '').strip()
     password = data.get('password') or ''
-    users = _load_users()
-    u = users.get(username)
+    u = get_user_record(username)
     if not u or not check_password_hash(u.get("password_hash", ""), password):
         return jsonify({"error": "帳號或密碼錯誤"}), 401
     _login_user(username)
