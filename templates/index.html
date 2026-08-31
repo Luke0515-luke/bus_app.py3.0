@@ -141,8 +141,8 @@
       <div id="subpage-container" class="hidden">
         <button id="btn-back-home" class="btn btn-block">← 返回主頁</button>
 
-        <!-- 子頁：路線篩選／附近站牌／小黃公車 共用同一套查詢結果 -->
-        <div id="subpage-route" class="subpage hidden">
+        <!-- 子頁：路線篩選／小黃公車（即時時刻查詢）共用同一套查詢結果 -->
+        <div id="subpage-query" class="subpage hidden">
 
           <!-- 小黃公車專用路線選單：只有從「小黃公車」圖示進來才會顯示，選了之後跟一般公車查詢流程完全一樣 -->
           <div id="yellow-bus-picker" class="hidden">
@@ -213,23 +213,6 @@
 
               <button id="btn-show-timetable" class="btn btn-block hidden">📅 查看固定時刻表</button>
               <div id="timetable-box" class="hidden"></div>
-
-              <hr>
-
-              <h3 id="nearby-anchor">📍 附近公車站</h3>
-              <button id="btn-gps" class="btn btn-block">📡 自動取得座標</button>
-              <div class="gps-coords">
-                緯度：<input id="lat-disp" readonly placeholder="點上方取得">
-              </div>
-              <div class="gps-coords">
-                經度：<input id="lon-disp" readonly placeholder="點上方取得">
-              </div>
-              <label>緯度</label>
-              <input type="text" id="gps-lat-in" placeholder="例：22.9997">
-              <label>經度</label>
-              <input type="text" id="gps-lon-in" placeholder="例：120.2270">
-              <button id="btn-search-nearby" class="btn btn-block">🔍 搜尋附近站牌</button>
-              <div id="nearby-result"></div>
             </div>
 
             <!-- 右欄：即時動態 -->
@@ -252,6 +235,26 @@
               </div>
               <div id="status-empty" class="info-box">👈 請從左側選擇路線開始查詢</div>
             </div>
+          </div>
+        </div>
+
+        <!-- 子頁：附近公車站（跟即時時刻查詢分開的獨立頁面） -->
+        <div id="subpage-nearby" class="subpage hidden">
+          <div class="query-left">
+            <h3 id="nearby-anchor">📍 附近公車站</h3>
+            <button id="btn-gps" class="btn btn-block">📡 自動取得座標</button>
+            <div class="gps-coords">
+              緯度：<input id="lat-disp" readonly placeholder="點上方取得">
+            </div>
+            <div class="gps-coords">
+              經度：<input id="lon-disp" readonly placeholder="點上方取得">
+            </div>
+            <label>緯度</label>
+            <input type="text" id="gps-lat-in" placeholder="例：22.9997">
+            <label>經度</label>
+            <input type="text" id="gps-lon-in" placeholder="例：120.2270">
+            <button id="btn-search-nearby" class="btn btn-block">🔍 搜尋附近站牌</button>
+            <div id="nearby-result"></div>
           </div>
         </div>
 
