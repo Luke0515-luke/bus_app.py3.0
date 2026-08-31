@@ -243,17 +243,16 @@ async function handleHomeTile(action) {
       break;
     case 'filter':
       el('yellow-bus-picker').classList.add('hidden');
-      showSubpage('subpage-route', 'filter-anchor');
+      showSubpage('subpage-query', 'filter-anchor');
       break;
     case 'nearby':
-      el('yellow-bus-picker').classList.add('hidden');
-      showSubpage('subpage-route', 'nearby-anchor');
+      showSubpage('subpage-nearby', 'nearby-anchor');
       break;
     case 'chat':
       showSubpage('subpage-chat', 'chat-anchor');
       break;
     case 'yellow-bus':
-      showSubpage('subpage-route', 'yellow-bus-anchor');
+      showSubpage('subpage-query', 'yellow-bus-anchor');
       el('yellow-bus-picker').classList.remove('hidden');
       loadYellowBusRoutes();
       break;
