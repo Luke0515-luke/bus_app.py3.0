@@ -141,8 +141,8 @@
       <div id="subpage-container" class="hidden">
         <button id="btn-back-home" class="btn btn-block">← 返回主頁</button>
 
-        <!-- 子頁：路線篩選／小黃公車（即時時刻查詢）共用同一套查詢結果 -->
-        <div id="subpage-query" class="subpage hidden">
+        <!-- 子頁：路線篩選／附近站牌／小黃公車 共用同一套查詢結果 -->
+        <div id="subpage-route" class="subpage hidden">
 
           <!-- 小黃公車專用路線選單：只有從「小黃公車」圖示進來才會顯示，選了之後跟一般公車查詢流程完全一樣 -->
           <div id="yellow-bus-picker" class="hidden">
@@ -238,9 +238,22 @@
           </div>
         </div>
 
-        <!-- 子頁：附近公車站（跟即時時刻查詢分開的獨立頁面） -->
+        <!-- 子頁：AI 助理 -->
+        <div id="subpage-chat" class="subpage hidden">
+          <div class="query-ai-section">
+            <h3 id="chat-anchor">🤖 AI 助理</h3>
+            <div class="caption">目前對話：<b id="chat-current-title"></b></div>
+            <div id="chat-messages"></div>
+            <div class="chat-input-row">
+              <input type="text" id="chat-input" placeholder="有什麼我可以幫忙的嗎？">
+              <button id="btn-chat-send" class="btn">送出</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 子頁：附近公車站（獨立頁面，跟即時查詢頁分開） -->
         <div id="subpage-nearby" class="subpage hidden">
-          <div class="query-left">
+          <div class="query-nearby-section">
             <h3 id="nearby-anchor">📍 附近公車站</h3>
             <button id="btn-gps" class="btn btn-block">📡 自動取得座標</button>
             <div class="gps-coords">
@@ -255,19 +268,6 @@
             <input type="text" id="gps-lon-in" placeholder="例：120.2270">
             <button id="btn-search-nearby" class="btn btn-block">🔍 搜尋附近站牌</button>
             <div id="nearby-result"></div>
-          </div>
-        </div>
-
-        <!-- 子頁：AI 助理 -->
-        <div id="subpage-chat" class="subpage hidden">
-          <div class="query-ai-section">
-            <h3 id="chat-anchor">🤖 AI 助理</h3>
-            <div class="caption">目前對話：<b id="chat-current-title"></b></div>
-            <div id="chat-messages"></div>
-            <div class="chat-input-row">
-              <input type="text" id="chat-input" placeholder="有什麼我可以幫忙的嗎？">
-              <button id="btn-chat-send" class="btn">送出</button>
-            </div>
           </div>
         </div>
 
