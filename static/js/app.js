@@ -44,6 +44,8 @@ const state = {
   reminders: [],
   reminderAlertedIds: new Set(),
   reminderPollTimer: null,
+  routeStatusPollTimer: null,
+  mapPollTimer: null,
   busListOpen: true,
   leafletMap: null,
   busLayer: null,
@@ -144,7 +146,10 @@ function bindStaticEvents() {
   el('end-select').addEventListener('change', () => loadRouteStatus());
   el('btn-dir0').addEventListener('click', () => setDirection('去程'));
   el('btn-dir1').addEventListener('click', () => setDirection('回程'));
-  el('btn-refresh-status').addEventListener('click', () => loadRouteStatus());
+  el('btn-refresh-status').addEventListener('click', () => {
+    loadRouteStatus();
+    startRouteStatusAutoRefresh();
+  });
 
   el('btn-gps').addEventListener('click', gpsLocate);
   el('btn-search-nearby').addEventListener('click', searchNearby);
@@ -183,7 +188,9 @@ function bindStaticEvents() {
   });
   el('btn-tts-stop').addEventListener('click', () => window.speechSynthesis.cancel());
 
-  el('btn-map-refresh').addEventListener('click', () => loadMapData(true));
+  el('btn-map-refresh').addEventListener('click', () => {
+    loadMapData(true);
+  });
   el('map-route-input').addEventListener('keydown', e => { if (e.key === 'Enter') loadMapData(true); });
   el('adv-stop-search').addEventListener('input', e => renderAdvStopOptions(e.target.value));
   el('btn-toggle-map-panel').addEventListener('click', () => {
@@ -221,6 +228,59 @@ function showHome() {
   el('subpage-container').classList.add('hidden');
   document.querySelectorAll('.subpage').forEach(s => s.classList.add('hidden'));
   el('yellow-bus-picker').classList.add('hidden');
+  stopRouteStatusAutoRefresh();
+}
+
+// 公車即時定位／到站動態現在改成後台每分鐘統一向 TDX 抓一次、存進檔案，
+// 所有使用者的查詢都直接讀這份檔案（見後端 fetch_bus_data／
+// fetch_bus_realtime_positions），所以前端可以放心地每 15 秒自動重新整理一次
+// 畫面，不會因此增加對 TDX 的查詢量——15 秒只是「更常去讀後台已經準備好的
+// 那份檔案」，不是「更常去問 TDX」。
+const AUTO_REFRESH_SECONDS = 15;
+
+function startRouteStatusAutoRefresh() {
+  stopRouteStatusAutoRefresh();
+  let secondsLeft = AUTO_REFRESH_SECONDS;
+  const countdownEl = el('route-refresh-countdown');
+  if (countdownEl) countdownEl.textContent = `⏱️ ${secondsLeft}s 後自動更新`;
+  state.routeStatusPollTimer = setInterval(() => {
+    secondsLeft -= 1;
+    if (secondsLeft <= 0) {
+      if (state.routeChoice) loadRouteStatus();
+      secondsLeft = AUTO_REFRESH_SECONDS;
+    }
+    if (countdownEl) countdownEl.textContent = `⏱️ ${secondsLeft}s 後自動更新`;
+  }, 1000);
+}
+function stopRouteStatusAutoRefresh() {
+  if (state.routeStatusPollTimer) {
+    clearInterval(state.routeStatusPollTimer);
+    state.routeStatusPollTimer = null;
+  }
+  const countdownEl = el('route-refresh-countdown');
+  if (countdownEl) countdownEl.textContent = '';
+}
+function startMapAutoRefresh() {
+  stopMapAutoRefresh();
+  let secondsLeft = AUTO_REFRESH_SECONDS;
+  const countdownEl = el('map-refresh-countdown');
+  if (countdownEl) countdownEl.textContent = `⏱️ ${secondsLeft}s 後自動更新`;
+  state.mapPollTimer = setInterval(() => {
+    secondsLeft -= 1;
+    if (secondsLeft <= 0) {
+      loadMapData();
+      secondsLeft = AUTO_REFRESH_SECONDS;
+    }
+    if (countdownEl) countdownEl.textContent = `⏱️ ${secondsLeft}s 後自動更新`;
+  }, 1000);
+}
+function stopMapAutoRefresh() {
+  if (state.mapPollTimer) {
+    clearInterval(state.mapPollTimer);
+    state.mapPollTimer = null;
+  }
+  const countdownEl = el('map-refresh-countdown');
+  if (countdownEl) countdownEl.textContent = '';
 }
 
 function showSubpage(id, anchorId) {
@@ -244,18 +304,22 @@ async function handleHomeTile(action) {
     case 'filter':
       el('yellow-bus-picker').classList.add('hidden');
       showSubpage('subpage-route', 'filter-anchor');
+      startRouteStatusAutoRefresh();
       break;
     case 'nearby':
       el('yellow-bus-picker').classList.add('hidden');
-      showSubpage('subpage-route', 'nearby-anchor');
+      showSubpage('subpage-nearby', 'nearby-anchor');
+      stopRouteStatusAutoRefresh();
       break;
     case 'chat':
       showSubpage('subpage-chat', 'chat-anchor');
+      stopRouteStatusAutoRefresh();
       break;
     case 'yellow-bus':
       showSubpage('subpage-route', 'yellow-bus-anchor');
       el('yellow-bus-picker').classList.remove('hidden');
       loadYellowBusRoutes();
+      stopRouteStatusAutoRefresh();
       break;
     case 'favorites':
       openSidebar();
@@ -331,7 +395,13 @@ function switchPage(page) {
   el('page-map').classList.toggle('hidden', page !== 'map');
   el('btn-page-toggle').textContent = page === 'map' ? '🚌 回到查詢頁面' : '🗺️ 公車即時地圖';
   document.body.classList.remove('sidebar-open');
-  if (page === 'map') initMapPageIfNeeded();
+  if (page === 'map') {
+    initMapPageIfNeeded();
+    // 不在這裡馬上開始倒數：這時候通常還沒選路線、地圖上還沒畫出任何公車定位，
+    // 交給 loadMapData() 在真的查到資料、畫出定位之後才開始倒數（見該函式內）。
+  } else {
+    stopMapAutoRefresh();
+  }
 }
 
 // ── 路線篩選 / 選擇 ───────────────────────────────────────
@@ -409,6 +479,7 @@ async function onRouteSelect() {
   el('reminder-add-box').classList.remove('hidden');
 
   await loadRouteStatus();
+  startRouteStatusAutoRefresh();
 }
 
 function refreshFavToggleLabel() {
@@ -474,6 +545,7 @@ async function loadRouteStatus() {
   el('status-empty').classList.add('hidden');
   el('weather-box').textContent = `🌡️ 台南目前天氣：${data.weather}`;
   el('weather-box').classList.remove('hidden');
+  el('realtime-stale-hint').classList.toggle('hidden', data.data_fresh !== false);
 
   state.destNames = { 去程: data.dest0, 回程: data.dest1 };
   const busCountText = typeof data.active_bus_count === 'number'
@@ -1134,8 +1206,11 @@ async function loadMapData(forceRefresh) {
   // 沒有輸入特定路線、也還沒按過「全部路線」的話，不要打去後端抓「全部路線」的重資料
   // （公車動態＋軌跡＋站牌一次抓全台南所有路線很吃 TDX 額度），維持空白地圖就好，
   // 一定要使用者明確選了東西（打字篩選、勾路線、或按「全部路線」）才真的去抓。
+  // 這種情況下畫面上根本還沒有任何公車定位可以看，也不需要每 15 秒空轉一次，
+  // 所以順便把自動更新倒數關掉，等真的選了路線、畫出定位之後才會重新開始倒數。
   if (!inputVal && !state.mapShowAll) {
     stats.textContent = '請點選路線，或按下方「全部路線」載入公車動態與軌跡';
+    stopMapAutoRefresh();
     return;
   }
   stats.textContent = '載入中...';
@@ -1147,11 +1222,16 @@ async function loadMapData(forceRefresh) {
     state.mapStopData = data.stops || [];
     state.savedRoutes = data.saved_routes || [];
     state.mapActiveRoutes = new Set(data.routes); // 這次實際抓到、畫出來的路線
-    el('map-caption').textContent = `資料時間：${data.now}　｜　每次按「🔄 更新」重抓最新位置`;
+    const staleNote = data.data_fresh === false ? '　｜　⚠️ 尚未更新資料' : '';
+    el('map-caption').textContent = `資料時間：${data.now}　｜　每次按「🔄 更新」重抓最新位置${staleNote}`;
     drawMapShapes();
     drawMapStops();
     drawMapBuses();
     renderMapPanel(el('map-search-box').value);
+    // 畫面上真的有畫出公車定位（或至少成功查了一次、只是剛好目前沒有車在跑）之後，
+    // 才開始 15 秒倒數自動更新——不然使用者一打開地圖頁、都還沒選路線，倒數就先
+    // 空轉跑掉，選了路線之後反而搭不上下一次真正有意義的更新，感覺像「一直跑不出來」。
+    startMapAutoRefresh();
   } catch (e) {
     stats.textContent = '載入失敗';
   }
