@@ -213,27 +213,11 @@
 
               <button id="btn-show-timetable" class="btn btn-block hidden">📅 查看固定時刻表</button>
               <div id="timetable-box" class="hidden"></div>
-
-              <hr>
-
-              <h3 id="nearby-anchor">📍 附近公車站</h3>
-              <button id="btn-gps" class="btn btn-block">📡 自動取得座標</button>
-              <div class="gps-coords">
-                緯度：<input id="lat-disp" readonly placeholder="點上方取得">
-              </div>
-              <div class="gps-coords">
-                經度：<input id="lon-disp" readonly placeholder="點上方取得">
-              </div>
-              <label>緯度</label>
-              <input type="text" id="gps-lat-in" placeholder="例：22.9997">
-              <label>經度</label>
-              <input type="text" id="gps-lon-in" placeholder="例：120.2270">
-              <button id="btn-search-nearby" class="btn btn-block">🔍 搜尋附近站牌</button>
-              <div id="nearby-result"></div>
             </div>
 
             <!-- 右欄：即時動態 -->
             <div class="query-right">
+              <div id="realtime-stale-hint" class="warning-box hidden">⚠️ 尚未更新資料，目前顯示的可能是稍早的結果</div>
               <div id="weather-box" class="info-box hidden"></div>
 
               <div id="status-box" class="hidden">
@@ -242,6 +226,7 @@
                   <button id="btn-dir0" class="btn dir-btn">➡️ 往</button>
                   <button id="btn-dir1" class="btn dir-btn">⬅️ 往</button>
                   <button id="btn-refresh-status" class="btn">🔄 重新整理</button>
+                  <span id="route-refresh-countdown" class="caption refresh-countdown"></span>
                 </div>
                 <div id="ubike-suggestion" class="success-box hidden"></div>
                 <div id="timeline-container" class="timeline-container"></div>
@@ -268,6 +253,26 @@
           </div>
         </div>
 
+        <!-- 子頁：附近公車站（獨立頁面，跟即時查詢頁分開） -->
+        <div id="subpage-nearby" class="subpage hidden">
+          <div class="query-nearby-section">
+            <h3 id="nearby-anchor">📍 附近公車站</h3>
+            <button id="btn-gps" class="btn btn-block">📡 自動取得座標</button>
+            <div class="gps-coords">
+              緯度：<input id="lat-disp" readonly placeholder="點上方取得">
+            </div>
+            <div class="gps-coords">
+              經度：<input id="lon-disp" readonly placeholder="點上方取得">
+            </div>
+            <label>緯度</label>
+            <input type="text" id="gps-lat-in" placeholder="例：22.9997">
+            <label>經度</label>
+            <input type="text" id="gps-lon-in" placeholder="例：120.2270">
+            <button id="btn-search-nearby" class="btn btn-block">🔍 搜尋附近站牌</button>
+            <div id="nearby-result"></div>
+          </div>
+        </div>
+
       </div><!-- /#subpage-container -->
     </section>
 
@@ -286,6 +291,7 @@
               <div class="map-btn-row">
                 <button id="btn-map-refresh" class="btn">🔄 更新</button>
                 <button id="btn-map-home" class="btn">🏠 回查詢頁</button>
+                <span id="map-refresh-countdown" class="caption refresh-countdown"></span>
               </div>
               <button id="btn-map-locate" class="btn btn-block">📍 定位我的位置</button>
               <div id="map-locate-status" class="caption"></div>
