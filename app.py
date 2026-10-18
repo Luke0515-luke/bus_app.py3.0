@@ -3212,6 +3212,26 @@ def api_save_route_data():
 
 
 
+
+@app.route('/api/name_map')
+def api_name_map():
+    """英文版用：站名／路線名稱的英文對照。
+    來源是每月靜態資料裡 TDX 本來就附的 En 欄位，只讀本地檔案，不打 TDX。"""
+    stops, routes = {}, {}
+    for st in fetch_all_bus_stops():
+        nm = st.get("StopName") or {}
+        zh, en = (nm.get("Zh_tw") or "").strip(), (nm.get("En") or "").strip()
+        if zh and en and zh != en:
+            stops.setdefault(zh, en)
+    for rt in fetch_all_route_meta():
+        nm = rt.get("RouteName") or {}
+        zh, en = (nm.get("Zh_tw") or "").strip(), (nm.get("En") or "").strip()
+        if zh and en and zh != en:
+            routes.setdefault(zh, en)
+    resp = jsonify({"stops": stops, "routes": routes})
+    resp.headers["Cache-Control"] = "public, max-age=86400"   # 一天內瀏覽器不用再問
+    return resp
+
 # ══════════════════════════════════════════════════════════
 # 歷史班距統計：把每次抓到的到站預估「順便」整理成班距資料（完全不多打 TDX）
 # ══════════════════════════════════════════════════════════
@@ -3645,6 +3665,14 @@ def api_chat():
     sid = state["current_session_id"]
     sess = state["chat_sessions"][sid]
 
+    # 使用者在畫面上選的語言（zh／en／ja）：AI 就用那個語言回答；站名、路線名稱照原文
+    lang = str(data.get('lang') or 'zh').lower()[:2]
+    rule4 = {
+        "en": "4. Reply in clear, natural English and keep the answer concise. Keep Chinese route and stop names as written "
+              "(you may add a short English gloss in parentheses). Never invent data that is not in the bus status.",
+        "ja": "4. 自然で簡潔な日本語で回答してください。路線名・停留所名は原文のまま表記し、"
+              "必要に応じて読みや簡単な説明を添えてください。【公車狀態】にないデータは作らないでください。",
+    }.get(lang) or "4. 用流暢自然的繁體中文回答，符合台南在地用語習慣，回答盡量精簡扼要，不要有無意義的贅字。"
     system_msg = (
         "你是台南公車查詢網站內建的 AI 助理，個性專業、友善、有耐心，擁有完整的對話記憶。\n"
         "請務必遵守以下規則，確保回答精準、不誤導使用者：\n"
@@ -3656,7 +3684,7 @@ def api_chat():
         "要提醒對方這筆資料可能已經過時，建議重新整理查詢頁面取得最新結果，不要講得像絕對即時。\n"
         "3. 回答公車動態時盡量具體（幾分鐘、有沒有無障礙車、車牌等），但只用資料裡真的有的內容，"
         "不足的部分就明說不確定，不要為了讓回答看起來完整而補上沒有根據的細節。\n"
-        "4. 用流暢自然的繁體中文回答，符合台南在地用語習慣，回答盡量精簡扼要，不要有無意義的贅字。"
+        f"{rule4}"
         f"\n\n【目前天氣】{state['current_weather']}"
         f"\n【公車狀態】{state['bus_status']}"
     )
