@@ -703,3 +703,23 @@ body.theme-night .mc-age.warn { color: #f0b04a; }
 body.theme-night .mc-age.old { color: #ff9d6b; }
 .popup-age { font-size: 11px; color: #666; }
 @media (max-width: 480px) { #map-caption .mc-now b { font-size: 13px; } }
+
+/* ── 語言切換（中文／English／日本語）────────────────────────── */
+.lang-switch { display: flex; gap: 4px; margin: 6px 0 10px; }
+.lang-switch button {
+  flex: 1; padding: 6px 4px; font-size: 13px; cursor: pointer; border-radius: 8px;
+  border: 1px solid rgba(255,255,255,.25); background: rgba(255,255,255,.06); color: inherit;
+  min-height: 34px; white-space: nowrap;
+}
+.lang-switch button.active { background: var(--signal, #f5a524); color: #1a1200; border-color: transparent; font-weight: 700; }
+.lang-switch-home { max-width: 320px; margin: 0 0 10px auto; }
+.lang-switch-home button { border-color: rgba(0,0,0,.18); background: rgba(0,0,0,.04); }
+body.theme-night .lang-switch-home button { border-color: rgba(255,255,255,.25); background: rgba(255,255,255,.06); }
+.lang-switch-home button.active { background: var(--signal, #f5a524); color: #1a1200; }
+/* 電腦版：首頁那一排只給手機版用，側邊欄已經有 */
+@media (min-width: 901px) { .lang-switch-home { display: none; } }
+/* 英文、日文字比較長：按鈕允許換行、日文字型 */
+html:not([lang="zh-Hant"]) .btn { white-space: normal; line-height: 1.3; }
+html:not([lang="zh-Hant"]) .caption, html:not([lang="zh-Hant"]) .plan-title { word-break: break-word; }
+html[lang="ja"] body { font-family: 'Hiragino Sans','Hiragino Kaku Gothic ProN','Yu Gothic','Noto Sans JP','Noto Sans TC',-apple-system,sans-serif; }
+html[lang="en"] body { font-family: -apple-system,'Segoe UI','Noto Sans TC',sans-serif; }
