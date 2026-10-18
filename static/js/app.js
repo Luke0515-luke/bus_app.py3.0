@@ -59,6 +59,7 @@ const state = {
   stopLayer: null,
   userLocationLayer: null,
   ttsText: '',
+  lastStatus: null,
 };
 
 async function api(url, opts) {
@@ -543,7 +544,7 @@ async function openShare(stop) {
   const box = el('share-box');
   box.classList.remove('hidden');
   box.innerHTML = `
-    <div class="share-title">🔗 ${esc(title)}（${esc(state.dirToggle)}）</div>
+    <div class="share-title">🔗 <b>${esc(state.routeChoice)}</b>${stop ? ' · <b>' + esc(stop) + '</b>' : ''} <span class="caption">（${esc(state.dirToggle)}）</span></div>
     <div class="share-qr" id="share-qr"><span class="caption">QR code 產生中...</span></div>
     <input class="share-url" id="share-url" type="text" readonly value="${esc(url)}">
     <div class="share-actions">
@@ -561,7 +562,7 @@ async function openShare(stop) {
     setTimeout(() => { const b = el('btn-share-copy'); if (b) b.textContent = '📋 複製連結'; }, 1500);
   });
   const nb = el('btn-share-native');
-  if (nb) nb.addEventListener('click', () => navigator.share({ title: `台南公車 ${title}`, url }).catch(() => {}));
+  if (nb) nb.addEventListener('click', () => navigator.share({ title: `${window.I18N.t('台南公車')} ${title}`, url }).catch(() => {}));
   box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   const ok = await loadQrLib();
   const qrBox = el('share-qr');
@@ -784,10 +785,21 @@ async function reloadStopSelectorsForDirection() {
 }
 
 // 朗讀目前查詢到的公車動態文字，首頁儀表板的喇叭按鈕跟原本查詢頁的喇叭按鈕共用這支
+function buildLocalizedTts(data) {
+  if (!data || !data.stops) return '';
+  const T = window.I18N.t, en = window.I18N.lang() === 'en';
+  return data.stops.filter(s => s.is_waiting_stop).map(s => {
+    const nm = T(s.name);
+    const eta = T(String(s.eta_text || ''));
+    const extra = (s.is_low ? ' ' + T('無障礙低底盤。') : '') + (s.is_ev ? ' ' + T('電動公車。') : '');
+    return en ? `${T('等候站')} ${nm}, ${eta}.${extra}` : `${T('等候站')} ${nm}、${eta}。${extra}`;
+  }).join(' ');
+}
 function speakTtsText() {
-  if (!state.ttsText) return;
-  const u = new SpeechSynthesisUtterance(state.ttsText);
-  u.lang = 'zh-TW'; u.rate = 0.9;
+  const text = window.I18N.lang() === 'zh' ? state.ttsText : buildLocalizedTts(state.lastStatus);
+  if (!text) return;
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = window.I18N.speech(); u.rate = 0.9;
   window.speechSynthesis.cancel();
   window.speechSynthesis.speak(u);
 }
@@ -831,7 +843,7 @@ async function loadRouteStatus() {
   state.destNames = { 去程: data.dest0, 回程: data.dest1 };
   const busCountText = typeof data.active_bus_count === 'number'
     ? `（目前共 ${data.active_bus_count} 台營運中）` : '';
-  el('status-title').textContent = `🚌 ${state.routeChoice} 全線即時動態${busCountText}`;
+  el('status-title').innerHTML = `🚌 ${esc(state.routeChoice)} 全線即時動態${busCountText ? `<span class="status-count"> ${esc(busCountText)}</span>` : ''}`;
   el('btn-dir0').textContent = `➡️ 往 ${data.dest0}`;
   el('btn-dir1').textContent = `⬅️ 往 ${data.dest1}`;
   el('btn-dir0').classList.toggle('active', state.dirToggle === '去程');
@@ -897,6 +909,7 @@ async function loadRouteStatus() {
   }).join('');
 
   state.ttsText = data.tts_text || '';
+  state.lastStatus = data;
   let sum = el('eta-age-summary');
   if (!sum) {
     sum = document.createElement('div');
@@ -978,13 +991,13 @@ function tickEtaCountdowns() {
 
 // ── GPS 附近站牌 ─────────────────────────────────────────
 function gpsLocate() {
-  if (!navigator.geolocation) { alert('瀏覽器不支援定位'); return; }
+  if (!navigator.geolocation) { alert(window.I18N.t('瀏覽器不支援定位')); return; }
   navigator.geolocation.getCurrentPosition(pos => {
     el('lat-disp').value = pos.coords.latitude.toFixed(6);
     el('lon-disp').value = pos.coords.longitude.toFixed(6);
     el('gps-lat-in').value = pos.coords.latitude.toFixed(6);
     el('gps-lon-in').value = pos.coords.longitude.toFixed(6);
-  }, () => alert('請允許瀏覽器定位權限'));
+  }, () => alert(window.I18N.t('請允許瀏覽器定位權限')));
 }
 
 async function searchNearby() {
@@ -1493,11 +1506,12 @@ async function loadHomeWeather() {
   } catch (e) { /* 首頁天氣卡查詢失敗就先不顯示，不影響其他功能 */ }
 }
 
+document.addEventListener('i18n:change', () => { renderHomeDate(); });
 function renderHomeDate() {
   const el2 = el('home-date');
   if (!el2) return;
   const now = new Date();
-  el2.textContent = now.toLocaleDateString('zh-TW', {
+  el2.textContent = now.toLocaleDateString(window.I18N.locale(), {
     year: 'numeric', month: 'long', day: 'numeric', weekday: 'long'
   });
 }
@@ -1528,9 +1542,9 @@ async function checkReminders() {
             state.reminderAlertedIds.add(r.id);
             playReminderBell();
             const msg = `🔔 ${r.route}（往${r.direction}）即將抵達「${r.stop}」：${stopInfo.eta_text}`;
-            showReminderBanner(msg);
+            showReminderBanner(window.I18N.t(msg));
             if (window.Notification && Notification.permission === 'granted') {
-              new Notification('公車到站提醒', { body: msg });
+              new Notification(window.I18N.t('公車到站提醒'), { body: window.I18N.t(msg) });
             }
           }
         } else {
@@ -1609,12 +1623,12 @@ async function sendChat() {
   box.scrollTop = box.scrollHeight;
   try {
     const data = await api('/api/chat', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query: q })
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query: q, lang: window.I18N.lang() })
     });
     const thinking = el('chat-thinking');
     if (thinking) thinking.remove();
     if (data.error) {
-      box.insertAdjacentHTML('beforeend', `<div class="chat-msg assistant">AI 錯誤：${esc(data.error)}</div>`);
+      box.insertAdjacentHTML('beforeend', `<div class="chat-msg assistant">${esc(window.I18N.t('AI 錯誤'))}: ${esc(data.error)}</div>`);
     } else {
       box.insertAdjacentHTML('beforeend', `<div class="chat-msg assistant">${esc(data.reply)}</div>`);
       if (data.title) el('chat-current-title').textContent = data.title;
@@ -1837,7 +1851,7 @@ function mapNowEpoch() {
   return Date.now() / 1000 + skew;
 }
 function fmtTaipeiTime(epoch, withSeconds) {
-  return new Date(epoch * 1000).toLocaleTimeString('zh-TW', {
+  return new Date(epoch * 1000).toLocaleTimeString(window.I18N.locale(), {
     timeZone: 'Asia/Taipei', hour12: false, hour: '2-digit', minute: '2-digit',
     ...(withSeconds ? { second: '2-digit' } : {}),
   });
@@ -1850,9 +1864,9 @@ function fmtAgeText(sec) {
 }
 function mapDataAgeText() {
   const c = state.mapClock;
-  if (!c || c.fetchedAt === null) return '定位時間不明';
+  if (!c || c.fetchedAt === null) return '<span>定位時間不明</span>';
   const age = Math.max(0, mapNowEpoch() - c.fetchedAt);
-  return `定位資料 ${fmtTaipeiTime(c.fetchedAt, false)} 抓取（${fmtAgeText(age)}）`;
+  return `📍 定位資料 ${fmtTaipeiTime(c.fetchedAt, false)} 抓取：<b>${fmtAgeText(age)}</b>`;
 }
 function renderMapClock() {
   const box = el('map-caption');
@@ -1866,7 +1880,7 @@ function renderMapClock() {
     html += `<span class="mc-sep">｜</span><span>📍 目前沒有公車定位資料</span>`;
   } else {
     const age = Math.max(0, now - c.fetchedAt);
-    html += `<span class="mc-sep">｜</span><span>📍 定位資料 ${fmtTaipeiTime(c.fetchedAt, false)} 抓取・` +
+    html += `<span class="mc-sep">｜</span><span>📍 定位資料 ${fmtTaipeiTime(c.fetchedAt, false)} 抓取：` +
       `<b class="mc-age ${age > 65 * 60 ? 'old' : (age > 30 * 60 ? 'warn' : '')}">${fmtAgeText(age)}</b></span>` +
       `<span class="mc-note">圖上公車位置每 5 分鐘依路線推進一站（推算，非即時定位）</span>`;
   }
@@ -1955,7 +1969,7 @@ function drawMapBuses() {
     marker.bindPopup(() => `
       <div class="bus-popup">
         <b>🚌 ${esc(b.route)}</b><br>
-        <span class="popup-age">📍 ${esc(mapDataAgeText())}・目前位置為依路線推算</span><br>
+        <span class="popup-age">${mapDataAgeText()}・目前位置為依路線推算</span><br>
         <span class="tag" style="background:${b.color}">車牌：${esc(b.plate)}</span>
         <span class="tag" style="background:#555">方向：${esc(b.dir)}</span>
         <span class="tag" style="background:#333">速度：${esc(String(b.speed))} km/h</span>
