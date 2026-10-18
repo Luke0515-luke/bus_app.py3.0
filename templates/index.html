@@ -19,6 +19,7 @@
   <!-- ══════════════ 左側常駐側邊欄 ══════════════ -->
   <aside id="sidebar">
     <h1 class="sidebar-title">🚌 台南公車助理</h1>
+    <div class="lang-switch" role="group" aria-label="Language"><button type="button" data-lang="zh">中文</button><button type="button" data-lang="en">English</button><button type="button" data-lang="ja">日本語</button></div>
 
     <button id="btn-font-toggle" class="btn btn-block">🔠 放大字體（視障輔助）</button>
     <button id="btn-page-toggle" class="btn btn-block">🗺️ 公車即時地圖</button>
@@ -29,7 +30,7 @@
     <div id="chat-history-panel" class="hidden">
       <h3>📋 對話記錄</h3>
       <button id="btn-new-chat" class="btn btn-block">➕ 新對話</button>
-      <div id="chat-session-list"></div>
+      <div id="chat-session-list" data-no-i18n></div>
       <hr>
     </div>
 
@@ -89,7 +90,7 @@
         <div id="auth-status"></div>
       </div>
       <div id="account-logged-in" class="hidden">
-        <p class="caption">已登入：<b id="account-username"></b></p>
+        <p class="caption">已登入：<b id="account-username" data-no-i18n></b></p>
         <button id="btn-logout" class="btn btn-block">🚪 登出</button>
       </div>
     </details>
@@ -112,6 +113,7 @@
       <!-- 手機版才顯示的「今日行程總覽」：日期＋天氣卡＋提醒狀態卡（電腦版維持原狀，
            這幾個元素用 CSS 只在手機版寬度顯示，desktop 不受影響）-->
       <div id="home-dashboard">
+        <div class="lang-switch lang-switch-home" role="group" aria-label="Language"><button type="button" data-lang="zh">中文</button><button type="button" data-lang="en">English</button><button type="button" data-lang="ja">日本語</button></div>
         <div id="home-date" class="home-date"></div>
         <h3 class="home-dashboard-title">📋 今日行程總覽</h3>
       </div>
@@ -288,7 +290,7 @@
         <div id="subpage-chat" class="subpage hidden">
           <div class="query-ai-section">
             <h3 id="chat-anchor">🤖 AI 助理</h3>
-            <div class="caption">目前對話：<b id="chat-current-title"></b></div>
+            <div class="caption">目前對話：<b id="chat-current-title" data-no-i18n></b></div>
             <div id="chat-messages"></div>
             <div class="chat-input-row">
               <input type="text" id="chat-input" placeholder="有什麼我可以幫忙的嗎？">
@@ -361,6 +363,7 @@
   </main>
 </div>
 
+<script src="{{ url_for('static', filename='js/i18n.js') }}"></script>
 <script src="{{ url_for('static', filename='js/app.js') }}"></script>
 </body>
 </html>
