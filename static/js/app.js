@@ -42,6 +42,9 @@ const state = {
   mapStopData: [],
   savedRoutes: [],
   reminders: [],
+  reminderMode: 'once',
+  schedTimer: null,
+  dayTypeCache: {},
   reminderAlertedIds: new Set(),
   reminderPollTimer: null,
   routeStatusPollTimer: null,
@@ -113,6 +116,7 @@ document.addEventListener('DOMContentLoaded', () => {
   loadHomeWeather();
   setInterval(loadHomeWeather, 10 * 60 * 1000); // 天氣後端本身快取 10 分鐘，前端跟著每 10 分鐘刷新一次就好
   setInterval(renderMapClock, 1000);   // 地圖頁的「現在時間／資料幾分鐘前」每秒跟著真實時刻走
+  maybeAutoTour();    // 第一次進站：引導教學
   applyUrlParams();   // 分享連結 ?route=33&stop=某站&dir=0
 });
 
@@ -187,6 +191,9 @@ function bindStaticEvents() {
   el('btn-map-locate').addEventListener('click', locateMeOnMap);
 
   el('btn-add-reminder').addEventListener('click', addReminder);
+  el('btn-rmode-once').addEventListener('click', () => setReminderMode('once'));
+  el('btn-rmode-sched').addEventListener('click', () => setReminderMode('sched'));
+  el('btn-tour').addEventListener('click', openTour);
 
   el('btn-chat-send').addEventListener('click', sendChat);
   el('chat-input').addEventListener('keydown', e => { if (e.key === 'Enter') sendChat(); });
@@ -641,6 +648,238 @@ function updateRouteExtras(route) {
 }
 
 
+
+// ══════════════════════════════════════════════════════════
+// 定時提醒：每天（平日／假日／每天）固定時間提醒某一站的預估到站時間
+// 全部在瀏覽器裡判斷時間；只在「提醒時間後 30 分鐘內」才會去查那一站的狀態，
+// 不會整天一直查。網頁需要保持開啟（之後做成 PWA／推播就能關掉網頁也會響）。
+// ══════════════════════════════════════════════════════════
+const SCHED_WINDOW_MIN = 30;
+const SCHED_DAY_LABEL = { weekday: '平日', weekend: '假日', daily: '每天' };
+
+function setReminderMode(mode) {
+  state.reminderMode = mode;
+  el('btn-rmode-once').classList.toggle('active', mode === 'once');
+  el('btn-rmode-sched').classList.toggle('active', mode === 'sched');
+  el('reminder-sched-fields').classList.toggle('hidden', mode !== 'sched');
+  el('btn-add-reminder').textContent = mode === 'sched' ? '⏰ 加入定時提醒' : '🔔 加入到站提醒';
+}
+
+function taipeiNowParts() {
+  const f = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Taipei', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  });
+  const p = {};
+  f.formatToParts(new Date()).forEach(x => { p[x.type] = x.value; });
+  return { date: `${p.year}-${p.month}-${p.day}`, minutes: (+p.hour) * 60 + (+p.minute) };
+}
+
+async function isWorkdayOn(dateStr) {
+  if (state.dayTypeCache[dateStr] !== undefined) return state.dayTypeCache[dateStr];
+  let workday;
+  try {
+    const d = await api(`/api/day_type?date=${encodeURIComponent(dateStr)}`);
+    workday = !!d.workday;
+  } catch (e) {
+    const wd = new Date(dateStr + 'T12:00:00Z').getUTCDay();   // 查不到行事曆就退回週一～五
+    workday = wd >= 1 && wd <= 5;
+  }
+  state.dayTypeCache[dateStr] = workday;
+  return workday;
+}
+
+function loadSchedFired() {
+  try { return JSON.parse(localStorage.getItem('schedFired') || '{}'); } catch (e) { return {}; }
+}
+function saveSchedFired(obj) {
+  try { localStorage.setItem('schedFired', JSON.stringify(obj)); } catch (e) { /* noop */ }
+}
+function schedMinutes(r) {
+  const [hh, mm] = r.schedule.time.split(':').map(Number);
+  return hh * 60 + mm;
+}
+function schedDayMatches(r, workday) {
+  const d = r.schedule.days;
+  return d === 'daily' || (d === 'weekday' && workday) || (d === 'weekend' && !workday);
+}
+// 剛加入時如果已經過了今天的提醒時間，就當作今天已經提醒過，不要一加入就馬上響
+function markSchedFiredIfPast(r) {
+  if (!r || !r.schedule) return;
+  const now = taipeiNowParts();
+  const delta = now.minutes - schedMinutes(r);
+  if (delta >= 0 && delta < SCHED_WINDOW_MIN) {
+    const fired = loadSchedFired();
+    fired[r.id] = { date: now.date, notice: 1, arrival: 1 };
+    saveSchedFired(fired);
+  }
+}
+
+function fireReminderMessage(msg) {
+  playReminderBell();
+  showReminderBanner(msg);
+  if (window.Notification && Notification.permission === 'granted') {
+    new Notification(window.I18N.t('公車到站提醒'), { body: window.I18N.t(msg) });
+  }
+}
+
+let schedChecking = false;
+async function checkScheduledReminders() {
+  if (schedChecking) return;
+  const list = state.reminders.filter(r => r.schedule);
+  if (!list.length || !el('reminder-sound-enabled').checked) return;
+  schedChecking = true;
+  try {
+    const now = taipeiNowParts();
+    const fired = loadSchedFired();
+    const ids = new Set(list.map(r => r.id));
+    Object.keys(fired).forEach(id => { if (!ids.has(id) || fired[id].date !== now.date) delete fired[id]; });
+    let workday = null;
+    for (const r of list) {
+      const delta = now.minutes - schedMinutes(r);
+      if (delta < 0 || delta >= SCHED_WINDOW_MIN) continue;
+      if (workday === null) workday = await isWorkdayOn(now.date);
+      if (!schedDayMatches(r, workday)) continue;
+      const f = fired[r.id] || (fired[r.id] = { date: now.date });
+      if (f.notice && f.arrival) continue;
+      let eta = null, mins = null;
+      try {
+        const data = await api(`/api/route_status?${new URLSearchParams({ route: r.route, direction: r.direction }).toString()}`);
+        const info = (data.stops || []).find(s => s.name === r.stop);
+        if (info) { eta = info.eta_text; mins = parseEtaMinutes(info.eta_text); r._lastEtaText = info.eta_text; r._lastBadgeClass = info.badge_class; }
+      } catch (e) { /* 查詢失敗就等下一個 30 秒 */ }
+      const where = `${r.route}（往${r.dest || r.direction}）在「${r.stop}」`;
+      const arriving = mins !== null && mins <= r.alert_minutes;
+      if (!f.notice) {
+        f.notice = 1;
+        if (arriving) f.arrival = 1;       // 一開始就快到了：只響一次，不要連響兩次
+        fireReminderMessage(`⏰ ${r.schedule.time} 定時提醒：${where}：${eta !== null ? eta : '目前沒有這一站的即時資料'}`);
+      } else if (!f.arrival && arriving) {
+        f.arrival = 1;
+        fireReminderMessage(`🔔 ${r.route}（往${r.dest || r.direction}）即將抵達「${r.stop}」：${eta}`);
+      }
+    }
+    saveSchedFired(fired);
+  } finally {
+    schedChecking = false;
+  }
+}
+
+// ══════════════════════════════════════════════════════════
+// 第一次進站的引導教學（可從側邊欄「❓ 使用教學」再看一次）
+// ══════════════════════════════════════════════════════════
+const TOUR_STEPS = [
+  { emoji: '👋', title: '歡迎使用台南公車助理', lang: true, body: [
+    '這個網站可以查台南公車的即時到站時間、看公車在地圖上的位置、規劃轉乘，還能設定到站提醒。',
+    '花不到 1 分鐘，帶你認識主要功能！'] },
+  { emoji: '🔍', title: '查路線與到站時間', body: [
+    '在「路線篩選」選一條路線（例如 綠1），再選你的「等候站」，就能看到每一站的預估到站時間。',
+    '點一下「最近查詢」，會直接幫你查這條路線並展開固定時刻表。'] },
+  { emoji: '📡', title: '看懂資料更新時間', body: [
+    '為了節省 TDX 資料額度，到站資料尖峰時段約每 6 分鐘、平常約每 15 分鐘才更新一次。',
+    '每筆預估旁邊會標示資料是幾分鐘前抓取的；倒數是依時間推算，下次更新時會自動校正。',
+    '晚上 23:00 到隔天 05:50 公車收班，這段時間不更新。'] },
+  { emoji: '🗺️', title: '即時地圖', body: [
+    '地圖上可以看到公車位置，上方會顯示現在時間與定位資料的年齡。',
+    '定位資料約每小時更新一次，中間的移動是依路線推算（每 5 分鐘走一站），不是即時 GPS。'] },
+  { emoji: '🔔', title: '到站提醒與定時提醒', body: [
+    '「單次提醒」：公車快到站前會響鈴。',
+    '「定時提醒」：例如每天 07:30 提醒你搭車的預估時間，可選平日、假日或每天。',
+    '提醒需要網頁保持開啟，並請允許通知權限。'] },
+  { emoji: '🔀', title: '站到站、轉乘與分享', body: [
+    '在「站到站查詢」輸入起點與終點，找直達或轉乘一次的路線，再按「運算轉乘時間」看每一段要多久。',
+    '每個站牌旁的 🔗 可以產生連結與 QR code，分享給朋友。'] },
+  { emoji: '🎉', title: '準備好了！', body: [
+    '之後想再看一次，可以點側邊欄的「❓ 使用教學」。',
+    '祝你搭車順利！'] },
+];
+let tourIdx = 0;
+
+function ensureTourDom() {
+  let ov = el('tour-overlay');
+  if (ov) return ov;
+  ov = document.createElement('div');
+  ov.id = 'tour-overlay';
+  ov.className = 'tour-overlay hidden';
+  ov.setAttribute('role', 'dialog');
+  ov.setAttribute('aria-modal', 'true');
+  ov.setAttribute('aria-labelledby', 'tour-title');
+  const langBtns = Object.keys(window.I18N.langs).map(k =>
+    `<button type="button" data-lang="${k}">${window.I18N.langs[k].label}</button>`).join('');
+  ov.innerHTML = `
+    <div class="tour-card">
+      <button type="button" id="tour-skip" class="tour-skip">略過教學</button>
+      <div class="tour-progress" id="tour-progress"></div>
+      <div class="tour-dots" id="tour-dots"></div>
+      <div class="tour-emoji" id="tour-emoji" aria-hidden="true"></div>
+      <h3 id="tour-title" tabindex="-1"></h3>
+      <div id="tour-body"></div>
+      <div id="tour-lang" class="hidden">
+        <div class="caption">先選擇你習慣的語言：</div>
+        <div class="lang-switch tour-lang-switch">${langBtns}</div>
+      </div>
+      <label class="tour-never"><input type="checkbox" id="tour-never" checked> 下次不要再顯示</label>
+      <div class="tour-actions">
+        <button type="button" id="tour-prev" class="btn">← 上一步</button>
+        <button type="button" id="tour-next" class="btn tour-next">下一步 →</button>
+      </div>
+    </div>`;
+  document.body.appendChild(ov);
+  ov.querySelectorAll('.lang-switch [data-lang]').forEach(b => b.classList.toggle('active', b.dataset.lang === window.I18N.lang()));
+  el('tour-skip').addEventListener('click', () => closeTour());
+  el('tour-prev').addEventListener('click', () => { if (tourIdx > 0) { tourIdx--; renderTour(); } });
+  el('tour-next').addEventListener('click', () => {
+    if (tourIdx >= TOUR_STEPS.length - 1) closeTour(); else { tourIdx++; renderTour(); }
+  });
+  ov.addEventListener('click', e => { if (e.target === ov) closeTour(); });
+  document.addEventListener('keydown', e => {
+    if (el('tour-overlay').classList.contains('hidden')) return;
+    if (e.key === 'Escape') closeTour();
+    else if (e.key === 'ArrowRight') el('tour-next').click();
+    else if (e.key === 'ArrowLeft') el('tour-prev').click();
+  });
+  return ov;
+}
+
+function renderTour() {
+  const s = TOUR_STEPS[tourIdx];
+  const last = tourIdx === TOUR_STEPS.length - 1;
+  el('tour-progress').textContent = `步驟 ${tourIdx + 1} / ${TOUR_STEPS.length}`;
+  el('tour-dots').innerHTML = TOUR_STEPS.map((_, i) => `<span class="${i === tourIdx ? 'on' : ''}"></span>`).join('');
+  el('tour-emoji').textContent = s.emoji;
+  el('tour-title').textContent = s.title;
+  el('tour-body').innerHTML = s.body.map(t => `<p>${esc(t)}</p>`).join('');
+  el('tour-lang').classList.toggle('hidden', !s.lang);
+  el('tour-prev').classList.toggle('hidden', tourIdx === 0);
+  el('tour-next').textContent = last ? '開始使用' : '下一步 →';
+  el('tour-skip').classList.toggle('hidden', last);
+  el('tour-title').focus({ preventScroll: true });
+}
+
+function openTour() {
+  const ov = ensureTourDom();
+  tourIdx = 0;
+  ov.classList.remove('hidden');
+  document.body.classList.add('tour-open');
+  renderTour();
+}
+
+function closeTour() {
+  const ov = el('tour-overlay');
+  if (!ov || ov.classList.contains('hidden')) return;
+  ov.classList.add('hidden');
+  document.body.classList.remove('tour-open');
+  try { if (el('tour-never').checked) localStorage.setItem('tourDone', '1'); } catch (e) { /* noop */ }
+}
+
+function maybeAutoTour() {
+  let done = false;
+  try { done = localStorage.getItem('tourDone') === '1'; } catch (e) { /* noop */ }
+  const viaShareLink = new URLSearchParams(location.search).get('route');   // 從分享連結進來的人先直接看結果
+  if (!done && !viaShareLink) setTimeout(openTour, 700);
+}
+
+
 // ── 字體 / 頁面切換 ─────────────────────────────────────────
 function toggleFont() {
   state.fontLarge = !state.fontLarge;
@@ -787,7 +1026,7 @@ async function reloadStopSelectorsForDirection() {
 // 朗讀目前查詢到的公車動態文字，首頁儀表板的喇叭按鈕跟原本查詢頁的喇叭按鈕共用這支
 function buildLocalizedTts(data) {
   if (!data || !data.stops) return '';
-  const T = window.I18N.t, en = window.I18N.lang() === 'en';
+  const T = window.I18N.t, en = ['en', 'ko'].includes(window.I18N.lang());
   return data.stops.filter(s => s.is_waiting_stop).map(s => {
     const nm = T(s.name);
     const eta = T(String(s.eta_text || ''));
@@ -1389,33 +1628,55 @@ async function addReminder() {
   const stop = el('start-select').value;
   const minutes = el('reminder-minutes').value;
   if (!route || !stop) return;
+  const sched = state.reminderMode === 'sched';
+  const time = sched ? el('reminder-time').value : '';
+  if (sched && !time) { showReminderBanner('⚠️ 請設定提醒時間'); return; }
+  const days = sched ? el('reminder-days').value : '';
+  const dest = (state.destNames && state.destNames[direction]) || '';
   unlockReminderAudio();
   if (window.Notification && Notification.permission === 'default') {
     Notification.requestPermission();
   }
   try {
+    const body = { route, direction, stop, alert_minutes: minutes, dest };
+    if (sched) { body.schedule_time = time; body.schedule_days = days; }
     const data = await api('/api/reminders/add', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ route, direction, stop, alert_minutes: minutes })
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
     });
     if (data.error) {
       showReminderBanner(`⚠️ ${data.error}`);
       return;
     }
     state.reminders = data.reminders;
+    if (sched) {
+      const added = state.reminders.find(r => r.route === route && r.direction === direction && r.stop === stop
+        && r.schedule && r.schedule.time === time && r.schedule.days === days);
+      markSchedFiredIfPast(added);
+    }
     renderReminders();
     ensureReminderPolling();
-    showReminderBanner(`🔔 已設定：${route}（往${direction}）到站前 ${minutes} 分鐘提醒`);
+    showReminderBanner(sched
+      ? `⏰ 已設定定時提醒：${route}（往${dest || direction}）・${SCHED_DAY_LABEL[days]}・${time}`
+      : `🔔 已設定：${route}（往${direction}）到站前 ${minutes} 分鐘提醒`);
   } catch (e) { /* 忽略單次失敗，使用者可以再按一次 */ }
 }
 
 function ensureReminderPolling() {
-  if (state.reminders.length && !state.reminderPollTimer) {
+  const hasOnce = state.reminders.some(r => !r.schedule);
+  if (hasOnce && !state.reminderPollTimer) {
     state.reminderPollTimer = setInterval(checkReminders, 20000);
     checkReminders();
-  } else if (!state.reminders.length && state.reminderPollTimer) {
+  } else if (!hasOnce && state.reminderPollTimer) {
     clearInterval(state.reminderPollTimer);
     state.reminderPollTimer = null;
+  }
+  const hasSched = state.reminders.some(r => r.schedule);
+  if (hasSched && !state.schedTimer) {
+    state.schedTimer = setInterval(checkScheduledReminders, 30000);
+    checkScheduledReminders();
+  } else if (!hasSched && state.schedTimer) {
+    clearInterval(state.schedTimer);
+    state.schedTimer = null;
   }
 }
 
@@ -1438,10 +1699,18 @@ function renderReminders() {
     return;
   }
   section.classList.remove('hidden');
-  list.innerHTML = state.reminders.map(r => `
+  list.innerHTML = state.reminders.map(r => r.schedule ? `
     <div class="stop-item reminder-item">
       <div>
-        <b>${esc(r.route)}</b>（往${esc(r.direction)}）－ ${esc(r.stop)}<br>
+        <span class="caption">⏰ ${esc(SCHED_DAY_LABEL[r.schedule.days] || '')} </span><b>${esc(r.schedule.time)}</b><br>
+        <b>${esc(r.route)}</b> <span>（往${esc(r.dest || r.direction)}）</span> － <span>${esc(r.stop)}</span><br>
+        <span class="caption">準時提醒預估到站時間，之後 ${SCHED_WINDOW_MIN} 分鐘內公車剩 ${r.alert_minutes} 分鐘時再提醒一次</span>
+      </div>
+      <button class="btn reminder-delete-btn" data-id="${esc(r.id)}">🗑️</button>
+    </div>` : `
+    <div class="stop-item reminder-item">
+      <div>
+        <b>${esc(r.route)}</b> <span>（往${esc(r.direction)}）</span> － <span>${esc(r.stop)}</span><br>
         <span class="caption">到站前 ${r.alert_minutes} 分鐘提醒</span>
       </div>
       <button class="btn reminder-delete-btn" data-id="${esc(r.id)}">🗑️</button>
@@ -1468,12 +1737,12 @@ function renderReminders() {
 function renderHomeReminderChip() {
   const chip = el('home-reminder-chip');
   if (!chip) return;
-  if (!state.reminders.length) {
+  const r = state.reminders.find(x => !x.schedule);   // 首頁卡片只追蹤「單次到站提醒」
+  if (!r) {
     chip.classList.add('hidden');
     return;
   }
   // 有好幾個提醒的話，先顯示第一個；每 20 秒的 checkReminders() 輪詢會持續更新這裡
-  const r = state.reminders[0];
   el('home-reminder-route').textContent = `前往 ${r.stop}`;
   const etaText = r._lastEtaText || '查詢中...';
   el('home-reminder-eta').textContent = etaText;
@@ -1517,11 +1786,12 @@ function renderHomeDate() {
 }
 
 async function checkReminders() {
-  if (!state.reminders.length) return;
+  const singles = state.reminders.filter(r => !r.schedule);
+  if (!singles.length) return;
   if (!el('reminder-sound-enabled').checked) return;
   // 同一條路線＋方向如果被好幾個提醒共用，合併成一次查詢就好，不用每個提醒各查一次
   const groups = {};
-  state.reminders.forEach(r => {
+  singles.forEach(r => {
     const key = `${r.route}|${r.direction}`;
     (groups[key] = groups[key] || []).push(r);
   });
