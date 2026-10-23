@@ -19,10 +19,11 @@
   <!-- ══════════════ 左側常駐側邊欄 ══════════════ -->
   <aside id="sidebar">
     <h1 class="sidebar-title">🚌 台南公車助理</h1>
-    <div class="lang-switch" role="group" aria-label="Language"><button type="button" data-lang="zh">中文</button><button type="button" data-lang="en">English</button><button type="button" data-lang="ja">日本語</button></div>
+    <div class="lang-switch" role="group" aria-label="Language"><button type="button" data-lang="zh">中文</button><button type="button" data-lang="en">English</button><button type="button" data-lang="ja">日本語</button><button type="button" data-lang="ko">한국어</button></div>
 
     <button id="btn-font-toggle" class="btn btn-block">🔠 放大字體（視障輔助）</button>
     <button id="btn-page-toggle" class="btn btn-block">🗺️ 公車即時地圖</button>
+    <button id="btn-tour" class="btn btn-block" type="button">❓ 使用教學</button>
 
     <hr>
 
@@ -113,7 +114,7 @@
       <!-- 手機版才顯示的「今日行程總覽」：日期＋天氣卡＋提醒狀態卡（電腦版維持原狀，
            這幾個元素用 CSS 只在手機版寬度顯示，desktop 不受影響）-->
       <div id="home-dashboard">
-        <div class="lang-switch lang-switch-home" role="group" aria-label="Language"><button type="button" data-lang="zh">中文</button><button type="button" data-lang="en">English</button><button type="button" data-lang="ja">日本語</button></div>
+        <div class="lang-switch lang-switch-home" role="group" aria-label="Language"><button type="button" data-lang="zh">中文</button><button type="button" data-lang="en">English</button><button type="button" data-lang="ja">日本語</button><button type="button" data-lang="ko">한국어</button></div>
         <div id="home-date" class="home-date"></div>
         <h3 class="home-dashboard-title">📋 今日行程總覽</h3>
       </div>
@@ -239,6 +240,21 @@
               </div>
 
               <div id="reminder-add-box" class="hidden">
+                <div class="dir-buttons reminder-mode">
+                  <button id="btn-rmode-once" type="button" class="btn dir-btn active">🔔 單次提醒</button>
+                  <button id="btn-rmode-sched" type="button" class="btn dir-btn">⏰ 定時提醒</button>
+                </div>
+                <div id="reminder-sched-fields" class="hidden">
+                  <label for="reminder-time">提醒時間</label>
+                  <input type="time" id="reminder-time" value="07:30">
+                  <label for="reminder-days">📆 重複</label>
+                  <select id="reminder-days">
+                    <option value="weekday">平日（上班日）</option>
+                    <option value="weekend">假日（週末與國定假日）</option>
+                    <option value="daily">每天</option>
+                  </select>
+                  <div class="caption">⏰ 到設定時間會提醒你預估到站時間，之後 30 分鐘內公車快到時再提醒一次。需要網頁保持開啟。</div>
+                </div>
                 <label>🔔 到站前幾分鐘提醒（會有鈴聲）</label>
                 <div class="dir-buttons">
                   <input type="number" id="reminder-minutes" min="1" max="60" value="5" style="flex:1;">
