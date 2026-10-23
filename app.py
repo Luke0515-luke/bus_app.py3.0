@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import math
 import time
@@ -2791,22 +2792,57 @@ def api_reminders_add():
     if not route or not stop:
         return jsonify({"error": "請先選擇路線與站牌，再加入到站提醒"}), 400
 
+    # 定時提醒：每天（平日／假日／每天）固定時間提醒這一站的預估到站時間。
+    # 沒帶 schedule_time／schedule_days 就是原本的「單次到站提醒」。
+    sched_time = (data.get('schedule_time') or '').strip()
+    sched_days = (data.get('schedule_days') or '').strip()
+    schedule = None
+    if sched_time or sched_days:
+        if not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", sched_time):
+            return jsonify({"error": "提醒時間格式不正確"}), 400
+        if sched_days not in ("weekday", "weekend", "daily"):
+            return jsonify({"error": "重複日設定不正確"}), 400
+        schedule = {"time": sched_time, "days": sched_days}
+    dest = (data.get('dest') or '').strip()[:40]
+
     state = get_state()
     reminders = state["reminders"]
-    # 同一條路線＋方向＋站牌只留一筆，重複加入的話當作只是要改提醒時間，不要一直疊出重複項目
+    # 同一條路線＋方向＋站牌（＋同一個定時設定）只留一筆，重複加入的話當作只是要改提醒時間，
+    # 不要一直疊出重複項目
     for r in reminders:
-        if r["route"] == route and r["direction"] == direction and r["stop"] == stop:
+        if (r["route"] == route and r["direction"] == direction and r["stop"] == stop
+                and r.get("schedule") == schedule):
             r["alert_minutes"] = alert_minutes
+            if dest:
+                r["dest"] = dest
             return jsonify({"reminders": reminders})
     if len(reminders) >= 20:
         return jsonify({"error": "最多只能設定 20 個到站提醒，請先刪除幾個舊的"}), 400
-    reminders.append({
+    item = {
         "id": str(uuid.uuid4())[:8],
         "route": route, "direction": direction, "stop": stop,
         "alert_minutes": alert_minutes,
         "created": _taipei_now().strftime("%Y-%m-%d %H:%M:%S"),
-    })
+    }
+    if dest:
+        item["dest"] = dest
+    if schedule:
+        item["schedule"] = schedule
+    reminders.append(item)
     return jsonify({"reminders": reminders})
+
+
+@app.route('/api/day_type')
+def api_day_type():
+    """某一天是不是上班日（含國定假日、補班）。定時提醒用它判斷「平日／假日」今天要不要響。"""
+    now = _taipei_now()
+    target = now
+    try:
+        d = datetime.strptime(request.args.get('date', ''), "%Y-%m-%d")
+        target = now.replace(year=d.year, month=d.month, day=d.day)
+    except ValueError:
+        pass
+    return jsonify({"date": target.strftime("%Y-%m-%d"), "workday": bool(is_workday(target))})
 
 
 @app.route('/api/reminders/update', methods=['POST'])
@@ -3670,6 +3706,8 @@ def api_chat():
     rule4 = {
         "en": "4. Reply in clear, natural English and keep the answer concise. Keep Chinese route and stop names as written "
               "(you may add a short English gloss in parentheses). Never invent data that is not in the bus status.",
+        "ko": "4. 자연스럽고 간결한 한국어로 답변하세요. 노선 이름과 정류장 이름은 원문 그대로 쓰고, "
+              "필요하면 간단한 설명을 덧붙이세요. 【公車狀態】에 없는 데이터는 지어내지 마세요.",
         "ja": "4. 自然で簡潔な日本語で回答してください。路線名・停留所名は原文のまま表記し、"
               "必要に応じて読みや簡単な説明を添えてください。【公車狀態】にないデータは作らないでください。",
     }.get(lang) or "4. 用流暢自然的繁體中文回答，符合台南在地用語習慣，回答盡量精簡扼要，不要有無意義的贅字。"
